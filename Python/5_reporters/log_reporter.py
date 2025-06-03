@@ -1,7 +1,7 @@
 import logging
 import os
 
-class ParticipantLogger:
+class LogReporter:
     """
     Manages a dedicated logger for a single participant, writing to a specific file.
     """

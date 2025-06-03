@@ -6,7 +6,7 @@ import pandas as pd # Import pandas for type checking
 import os
 # import mne # For potential future topomaps
 
-class PlottingService:
+class PlotReporter:
     def __init__(self, logger, output_dir_base, 
                  reporting_figure_format_config, 
                  reporting_dpi_config):
@@ -109,13 +109,18 @@ class PlottingService:
         
         stats_text = ""
         if corr_results is not None and not corr_results.empty:
-            # Safely extract correlation statistics
+            # Safely extract correlation statistics from the first row of corr_results
             r_val = corr_results['r'].iloc[0] if 'r' in corr_results.columns and not corr_results['r'].empty else np.nan
             p_val = corr_results['p-val'].iloc[0] if 'p-val' in corr_results.columns and not corr_results['p-val'].empty else np.nan
-            n_val = corr_results['n'].iloc[0] if 'n' in corr_results.columns and not corr_results['n'].empty else (len(x_data) if x_data is not None else 'N/A')
+            # Get 'n' from corr_results if available, otherwise calculate from data if possible
+            if 'n' in corr_results.columns and not corr_results['n'].empty:
+                n_val = corr_results['n'].iloc[0]
+            elif x_data is not None and y_data is not None: # Ensure data is available to count
+                n_val = len(pd.concat([pd.Series(x_data), pd.Series(y_data)], axis=1).dropna())
+            else:
+                n_val = 'N/A'
             
             p_corr_fdr_val = corr_results.get('p-corr-fdr', pd.Series([np.nan])).iloc[0] # Use .get for safety
-            p_corr_bonf_val = corr_results.get('p-corr-bonf', pd.Series([np.nan])).iloc[0] # Use .get for safety
             
             stats_text = f"n={n_val}, r={r_val:.3f}, p={p_val:.3f}"
             if p_corr_fdr_val is not None and not np.isnan(p_corr_fdr_val) and p_corr_fdr_val != p_val :

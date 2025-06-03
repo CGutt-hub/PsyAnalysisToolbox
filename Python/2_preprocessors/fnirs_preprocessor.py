@@ -24,7 +24,8 @@ class FNIRSPreprocessor:
             motion_correction_method_config (str): Method for motion correction (e.g., 'tddr', 'none').
             filter_band_config (tuple): Low and high cut-off frequencies for filtering (e.g., (0.01, 0.1)).
         Returns:
-            mne.io.Raw: Preprocessed fNIRS haemoglobin concentration data, or None if error.
+            mne.io.Raw: Preprocessed fNIRS data containing haemoglobin (HbO, HbR) concentrations,
+                        or None if an error occurs.
         """
         if fnirs_raw_od is None:
             self.logger.warning("FNIRSPreprocessor - No raw fNIRS OD data provided. Skipping.")
@@ -72,9 +73,12 @@ class FNIRSPreprocessor:
             # elif motion_correction_method_config == 'savgol':
             #     self.logger.info("FNIRSPreprocessor - Applying Savitzky-Golay filter for motion artifact correction.")
             #     # Example: corrected_haemo = raw_haemo.copy().filter(..., method='savgol', h_freq=None, l_freq=None, **some_savgol_params_config)
-            #     corrected_haemo = raw_haemo # Placeholder if savgol not fully implemented here
+            #     corrected_haemo = raw_haemo # Placeholder if savgol not fully implemented here            
+            elif motion_correction_method_config and motion_correction_method_config.lower() != 'none':
+                self.logger.warning(f"FNIRSPreprocessor - Unsupported motion correction method '{motion_correction_method_config}' specified. No motion correction applied beyond initial processing.")
+                corrected_haemo = raw_haemo # Pass through
             else:
-                self.logger.info("FNIRSPreprocessor - No specific motion correction method applied beyond initial processing.")
+                self.logger.info(f"FNIRSPreprocessor - Motion correction method is '{motion_correction_method_config}'. No specific motion correction applied beyond initial processing.")
                 corrected_haemo = raw_haemo # Pass through if no method or 'none'
             self.logger.info(f"FNIRSPreprocessor - Applying band-pass filter ({filter_band_config[0]}-{filter_band_config[1]} Hz).")
             corrected_haemo.filter(l_freq=filter_band_config[0], h_freq=filter_band_config[1],

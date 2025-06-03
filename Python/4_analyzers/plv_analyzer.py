@@ -12,10 +12,10 @@ def _calculate_plv_segment(phase_sig1, phase_sig2, logger_obj):
     phase_diff = phase_sig1[:min_len] - phase_sig2[:min_len]
     return np.abs(np.mean(np.exp(1j * phase_diff)))
 
-class ConnectivityAnalyzer:
+class PLVAnalyzer:
     def __init__(self, logger):
         self.logger = logger
-        self.logger.info("ConnectivityAnalyzer initialized.")
+        self.logger.info("PLVAnalyzer initialized.")
 
     def _get_autonomic_segment_for_epoch(self, eeg_epoch_start_time_abs, eeg_epoch_duration_sec,
                                          autonomic_signal_full, autonomic_signal_sfreq_orig,
@@ -68,9 +68,8 @@ class ConnectivityAnalyzer:
     def calculate_trial_plv(self, eeg_epochs, eeg_channels_for_plv, 
                             continuous_hrv_signal, hrv_sfreq,
                             phasic_eda_signal, eda_sfreq,
-                            plv_eeg_bands_config, # Pass bands config directly
-                            participant_id, raw_eeg_sfreq_for_event_timing,
-                            trial_id_eprime_map=None): # Add map, default to None
+                            plv_eeg_bands_config, 
+                            participant_id, raw_eeg_sfreq_for_event_timing):
         """
         Calculates trial-wise PLV between specified EEG channels (averaged) and autonomic signals.
 
@@ -84,8 +83,9 @@ class ConnectivityAnalyzer:
             plv_eeg_bands_config (dict): Dictionary mapping band names (str) to frequency tuples (float, float).
             participant_id (str): Participant ID.
             raw_eeg_sfreq_for_event_timing (float): Original sampling rate of the raw EEG from which events were derived.
-                                                   Used to convert epoch event samples to absolute time.
-            trial_id_eprime_map (dict, optional): Map from numeric e-prime trial ID to string identifier.
+                                                   Used to convert epoch event samples to absolute time. 
+                                                   It's assumed that `eeg_epochs.metadata` contains a column 
+                                                   'trial_identifier_eprime' with the string trial ID.
         Returns:
             pd.DataFrame: DataFrame with trial-wise PLV results.
         """
@@ -98,9 +98,6 @@ class ConnectivityAnalyzer:
         all_trial_plv_results = []
         eeg_epoch_sfreq = eeg_epochs.info['sfreq']
     
-        if trial_id_eprime_map is None: # Ensure it's a dict for safe lookup
-            trial_id_eprime_map = {}
-        
         if not plv_eeg_bands_config:
             self.logger.warning("ConnectivityAnalyzer - PLV EEG bands configuration is empty. Skipping PLV calculation.")
             return pd.DataFrame()
@@ -130,15 +127,13 @@ class ConnectivityAnalyzer:
             event_sample_in_raw = epoch.events[0,0] 
             epoch_tmin_from_event = epoch.tmin
             
-            trial_identifier_eprime_str = "N/A_EPRIME_ID"
-            # Check if the 4th column (index 3) exists in epoch.events
-            if epoch.events.shape[1] > 3: 
-                eprime_trial_id_numeric = epoch.events[0, 3] 
-                # Find key by value in the map
-                trial_identifier_eprime_str = next((k for k, v in trial_id_eprime_map.items() if v == eprime_trial_id_numeric), f"UNKNOWN_EPRIME_ID_NUMERIC_{eprime_trial_id_numeric}")
+            # Expect the trial identifier to be in epoch metadata
+            trial_identifier_eprime_str = "N/A_TRIAL_ID" # Default if not found
+            if eeg_epochs.metadata is not None and 'trial_identifier_eprime' in eeg_epochs.metadata.columns:
+                # Assuming metadata is indexed correctly with epochs (iloc[i] corresponds to the i-th epoch)
+                trial_identifier_eprime_str = eeg_epochs.metadata.iloc[i].get('trial_identifier_eprime', trial_identifier_eprime_str)
             else:
-                self.logger.warning(f"ConnectivityAnalyzer - E-Prime trial ID (4th event column) not found in epoch event info for P:{participant_id}, trial_idx_in_epoch_obj {i}, cond {condition_name}.")
-
+                self.logger.debug(f"ConnectivityAnalyzer - 'trial_identifier_eprime' column not found in epoch metadata or metadata is None for P:{participant_id}, trial_idx_in_epoch_obj {i}, cond {condition_name}.")
 
             trial_start_time_abs = (event_sample_in_raw / raw_eeg_sfreq_for_event_timing) + epoch_tmin_from_event
             trial_duration_sec = target_eeg_epoch_len_samples / eeg_epoch_sfreq
@@ -160,8 +155,8 @@ class ConnectivityAnalyzer:
                         plv_val = _calculate_plv_segment(phase_eeg_epoch_band, phase_hrv_epoch, self.logger)
                         if not np.isnan(plv_val):
                             all_trial_plv_results.append({ 
-                                'participant_id': participant_id, 'condition': condition_name, 
-                                'trial_index_in_condition_epoch': i, # Index within this specific condition's epochs
+                                'participant_id': participant_id, 'condition': condition_name,
+                                'epoch_index_overall': i, # Index of the epoch in the input eeg_epochs object
                                 'trial_identifier_eprime': trial_identifier_eprime_str,
                                 'modality_pair': 'EEG-HRV', 'eeg_band': band_name, 'plv': plv_val
                             })
@@ -182,9 +177,9 @@ class ConnectivityAnalyzer:
                         phase_eeg_epoch_band = np.angle(hilbert(eeg_filtered_band))
                         plv_val = _calculate_plv_segment(phase_eeg_epoch_band, phase_eda_epoch, self.logger)
                         if not np.isnan(plv_val): 
-                            all_trial_plv_results.append({ 
-                                'participant_id': participant_id, 'condition': condition_name, 
-                                'trial_index_in_condition_epoch': i,
+                            all_trial_plv_results.append({
+                                'participant_id': participant_id, 'condition': condition_name,
+                                'epoch_index_overall': i, # Index of the epoch in the input eeg_epochs object
                                 'trial_identifier_eprime': trial_identifier_eprime_str,
                                 'modality_pair': 'EEG-EDA', 'eeg_band': band_name, 'plv': plv_val
                             })
