@@ -1,27 +1,49 @@
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
+from typing import Callable, List, Any
+
+# Module-level default for ParallelTaskRunner
+PARALLEL_TASK_RUNNER_DEFAULT_MAX_WORKERS: int = os.cpu_count() or 1 # Default to number of CPUs, or 1 if undetectable
 
 class ParallelTaskRunner:
-    def __init__(self, task_function, task_configs, max_workers, main_logger_name):
+    
+    def __init__(self, 
+                 task_function: Callable[[Any], Any], 
+                 task_configs: List[Any], 
+                 main_logger_name: str,
+                 max_workers: int = PARALLEL_TASK_RUNNER_DEFAULT_MAX_WORKERS):
         """
         Manages parallel execution of a given task function using ThreadPoolExecutor.
 
         Args:
             task_function: The function to execute for each task.
                            It should accept a single argument (a dictionary or object)
-                           containing all necessary configuration for that task.
-            task_configs: A list of configuration objects/dictionaries, one for each task.
-            max_workers: Maximum number of worker threads.
-            main_logger_name: Name of the main logger to use for the runner's own logging.
+                           containing all necessary configuration for that task. 
+                           It can return any result. If the task_function handles its
+                           own errors, it's recommended to return a dictionary 
+                           with a 'status' key indicating success or specific error.
+            task_configs (List[Any]): A list of configuration objects/dictionaries, one for each task.
+            main_logger_name (str): Name of the main logger to use for the runner's own logging.
+            max_workers (int, optional): Maximum number of worker threads. 
+                                         Defaults to PARALLEL_TASK_RUNNER_DEFAULT_MAX_WORKERS.
         """
         self.task_function = task_function
         self.task_configs = task_configs
-        self.max_workers = max_workers
-        self.logger = logging.getLogger(main_logger_name)
-        self.results = []
+        self.logger = logging.getLogger(main_logger_name) # Initialize logger once, early
+        
+        if max_workers <= 0:
+            self.logger.warning(
+                f"max_workers was initialized with {max_workers}, which is not positive. "
+                f"Defaulting to 1 worker to ensure ThreadPoolExecutor can start."
+            )
+            self.max_workers = 1
+        else:
+            self.max_workers = max_workers
+        self.results: List[Any] = []
 
-    def run(self):
+    def run(self) -> List[Any]:
+        self.results = [] # Clear results from any previous run
         self.logger.info(f"Starting parallel execution with up to {self.max_workers} workers for {len(self.task_configs)} tasks.")
         
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:

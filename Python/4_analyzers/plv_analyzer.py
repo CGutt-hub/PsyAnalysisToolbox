@@ -13,6 +13,20 @@ def _calculate_plv_segment(phase_sig1, phase_sig2, logger_obj):
     return np.abs(np.mean(np.exp(1j * phase_diff)))
 
 class PLVAnalyzer:
+    # Default parameters for PLV analysis
+    DEFAULT_TRIAL_IDENTIFIER_EPRIME = "N/A_TRIAL_ID"
+    
+    # Default output column names
+    OUTPUT_COL_PARTICIPANT_ID = 'participant_id'
+    OUTPUT_COL_CONDITION = 'condition'
+    OUTPUT_COL_EPOCH_INDEX = 'epoch_index_overall'
+    OUTPUT_COL_TRIAL_ID_EPRIME = 'trial_identifier_eprime'
+    OUTPUT_COL_MODALITY_PAIR = 'modality_pair'
+    OUTPUT_COL_EEG_BAND = 'eeg_band'
+    OUTPUT_COL_PLV = 'plv'
+    MODALITY_PAIR_EEG_HRV = 'EEG-HRV'
+    MODALITY_PAIR_EEG_EDA = 'EEG-EDA'
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("PLVAnalyzer initialized.")
@@ -124,11 +138,10 @@ class PLVAnalyzer:
             target_eeg_epoch_len_samples = len(eeg_trial_data_avg)
 
             # Determine absolute start and end times of the EEG epoch
-            event_sample_in_raw = epoch.events[0,0] 
+            event_sample_in_raw = epoch.events[0,0]
             epoch_tmin_from_event = epoch.tmin
             
-            # Expect the trial identifier to be in epoch metadata
-            trial_identifier_eprime_str = "N/A_TRIAL_ID" # Default if not found
+            trial_identifier_eprime_str = self.DEFAULT_TRIAL_IDENTIFIER_EPRIME
             if eeg_epochs.metadata is not None and 'trial_identifier_eprime' in eeg_epochs.metadata.columns:
                 # Assuming metadata is indexed correctly with epochs (iloc[i] corresponds to the i-th epoch)
                 trial_identifier_eprime_str = eeg_epochs.metadata.iloc[i].get('trial_identifier_eprime', trial_identifier_eprime_str)
@@ -154,11 +167,11 @@ class PLVAnalyzer:
                         phase_eeg_epoch_band = np.angle(hilbert(eeg_filtered_band))
                         plv_val = _calculate_plv_segment(phase_eeg_epoch_band, phase_hrv_epoch, self.logger)
                         if not np.isnan(plv_val):
-                            all_trial_plv_results.append({ 
-                                'participant_id': participant_id, 'condition': condition_name,
-                                'epoch_index_overall': i, # Index of the epoch in the input eeg_epochs object
-                                'trial_identifier_eprime': trial_identifier_eprime_str,
-                                'modality_pair': 'EEG-HRV', 'eeg_band': band_name, 'plv': plv_val
+                            all_trial_plv_results.append({
+                                self.OUTPUT_COL_PARTICIPANT_ID: participant_id, self.OUTPUT_COL_CONDITION: condition_name,
+                                self.OUTPUT_COL_EPOCH_INDEX: i,
+                                self.OUTPUT_COL_TRIAL_ID_EPRIME: trial_identifier_eprime_str,
+                                self.OUTPUT_COL_MODALITY_PAIR: self.MODALITY_PAIR_EEG_HRV, self.OUTPUT_COL_EEG_BAND: band_name, self.OUTPUT_COL_PLV: plv_val
                             })
             
             # --- EEG-EDA PLV ---
@@ -178,10 +191,10 @@ class PLVAnalyzer:
                         plv_val = _calculate_plv_segment(phase_eeg_epoch_band, phase_eda_epoch, self.logger)
                         if not np.isnan(plv_val): 
                             all_trial_plv_results.append({
-                                'participant_id': participant_id, 'condition': condition_name,
-                                'epoch_index_overall': i, # Index of the epoch in the input eeg_epochs object
-                                'trial_identifier_eprime': trial_identifier_eprime_str,
-                                'modality_pair': 'EEG-EDA', 'eeg_band': band_name, 'plv': plv_val
+                                self.OUTPUT_COL_PARTICIPANT_ID: participant_id, self.OUTPUT_COL_CONDITION: condition_name,
+                                self.OUTPUT_COL_EPOCH_INDEX: i,
+                                self.OUTPUT_COL_TRIAL_ID_EPRIME: trial_identifier_eprime_str,
+                                self.OUTPUT_COL_MODALITY_PAIR: self.MODALITY_PAIR_EEG_EDA, self.OUTPUT_COL_EEG_BAND: band_name, self.OUTPUT_COL_PLV: plv_val
                             })
         
         self.logger.info(f"ConnectivityAnalyzer - Trial-wise PLV calculation completed for P:{participant_id}. Found {len(all_trial_plv_results)} PLV values.")

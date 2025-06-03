@@ -4,6 +4,12 @@ from typing import Dict, List, Tuple, Optional, Any # Added Any for welch_params
 # No direct import of FAIAnalyzer here, it will be passed as an instance
 
 class PSDAnalyzer:
+    # Default parameters for Welch's method
+    DEFAULT_WELCH_WINDOW = 'hann'
+    DEFAULT_WELCH_N_FFT_SECONDS = 1.0  # For deriving n_fft from sfreq
+    DEFAULT_WELCH_OVERLAP_RATIO = 0.5 # For deriving n_overlap from n_fft
+    DEFAULT_SKIP_CONDITIONS_PSD = ["bad_stim", "boundary", "edge"] # Lowercase for case-insensitive check
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("PSDAnalyzer initialized.")
@@ -15,18 +21,18 @@ class PSDAnalyzer:
         """Helper to compute PSD for given epochs and band."""
 
         # Default Welch parameters
-        default_n_fft = int(sfreq) # Default: 1-second window
+        default_n_fft = int(sfreq * self.DEFAULT_WELCH_N_FFT_SECONDS)
         # Use epoch duration if it's shorter than 1 second for n_fft
         epoch_duration_samples = epochs.times.shape[0] if epochs.times is not None else 0
         if epoch_duration_samples > 0 and epoch_duration_samples < default_n_fft:
              default_n_fft = epoch_duration_samples # Use epoch length if shorter than 1s
 
-        default_n_overlap = int(default_n_fft * 0.5) # Default: 50% overlap
+        default_n_overlap = int(default_n_fft * self.DEFAULT_WELCH_OVERLAP_RATIO)
 
         current_welch_params = {
             'n_fft': default_n_fft,
             'n_overlap': default_n_overlap,
-            'window': 'hann' # MNE default for Welch
+            'window': self.DEFAULT_WELCH_WINDOW
         }
 
         if welch_params_custom: # User provided overrides
@@ -45,7 +51,7 @@ class PSDAnalyzer:
                 else:
                     current_welch_params['n_overlap'] = user_n_overlap
             else:
-                current_welch_params['n_overlap'] = int(current_welch_params['n_fft'] * 0.5)
+                current_welch_params['n_overlap'] = int(current_welch_params['n_fft'] * self.DEFAULT_WELCH_OVERLAP_RATIO)
 
             if 'window' in welch_params_custom and welch_params_custom['window'] is not None:
                 current_welch_params['window'] = welch_params_custom['window']
@@ -104,7 +110,7 @@ class PSDAnalyzer:
         sfreq = epochs_all_conditions.info['sfreq']
 
         for condition_name in epochs_all_conditions.event_id.keys(): # Iterate through conditions in the Epochs object
-            if condition_name.lower() in ["bad_stim", "boundary", "edge"]:
+            if condition_name.lower() in self.DEFAULT_SKIP_CONDITIONS_PSD:
                 self.logger.debug(f"PSDAnalyzer - Skipping PSD for non-experimental condition '{condition_name}'.")
                 continue
 

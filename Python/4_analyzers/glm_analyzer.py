@@ -2,6 +2,9 @@ import pandas as pd
 import mne
 from mne_nirs.statistics import run_glm
 from typing import Dict, List, Optional, Any # For type hinting
+
+# Default parameters for GLM
+DEFAULT_GLM_NOISE_MODEL = "ar1"
 class GLMAnalyzer:
     def __init__(self, logger):
         self.logger = logger
@@ -15,7 +18,8 @@ class GLMAnalyzer:
                           # Optional: fNIRS-specific ROI analysis parameters
                           rois_config: Optional[Dict[str, List[str]]] = None,
                           activation_p_threshold: Optional[float] = None,
-                          roi_trigger_contrast_name: Optional[str] = None # New parameter
+                          roi_trigger_contrast_name: Optional[str] = None,
+                          noise_model: str = DEFAULT_GLM_NOISE_MODEL
                           ) -> Dict[str, Any]:
         """
         Runs a first-level GLM on prepared data using a prepared design matrix and computes specified contrasts.
@@ -28,7 +32,8 @@ class GLMAnalyzer:
             contrasts_config (dict): Dictionary defining contrasts based on columns in design_matrix_prepared.
             rois_config (Optional[dict]): Dictionary defining ROIs and their channels (e.g., for fNIRS).
             activation_p_threshold (Optional[float]): P-value threshold for identifying active channels/ROIs (e.g., for fNIRS).
-            roi_trigger_contrast_name (Optional[str]): The specific contrast name that should trigger ROI analysis.
+            roi_trigger_contrast_name (Optional[str]): The specific contrast name that should trigger ROI analysis. If None, ROI analysis is not triggered by p-value.
+            noise_model (str): The noise model to use for the GLM. Defaults to GLMAnalyzer.DEFAULT_GLM_NOISE_MODEL.
 
         Returns:
             Dict[str, Any]: A dictionary containing 'glm_estimates' (dict of GLMEstimate objects),
@@ -73,7 +78,7 @@ class GLMAnalyzer:
             self.logger.info(f"GLMAnalyzer: Using design matrix with columns for GLM: {list(design_matrix_for_glm.columns)}")
             
             # Run GLM
-            glm_estimates_dict = run_glm(data_for_glm, design_matrix_for_glm, noise_model='ar1')
+            glm_estimates_dict = run_glm(data_for_glm, design_matrix_for_glm, noise_model=noise_model)
             # glm_estimates_dict will be a dict: ch_name -> GLMEstimate object
             
             contrast_results_dfs = {}

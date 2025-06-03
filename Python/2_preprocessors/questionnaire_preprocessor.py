@@ -2,6 +2,14 @@ import pandas as pd
 from typing import Dict, Optional, Any
 
 class QuestionnairePreprocessor:
+    # Default parameters
+    DEFAULT_OUTPUT_PID_COL_NAME = 'participant_id'
+
+    # Explicit names for expected configuration keys
+    CONFIG_KEY_PID_ORIGINAL = 'participant_id_column_original'
+    CONFIG_KEY_ITEM_MAP = 'item_column_map'
+    CONFIG_KEY_OUTPUT_PID_NAME = 'output_participant_id_col_name' # Corresponds to DEFAULT_OUTPUT_PID_COL_NAME
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("QuestionnairePreprocessor initialized.")
@@ -34,22 +42,22 @@ class QuestionnairePreprocessor:
             return input_df # Return as is, or pd.DataFrame() if preferred for empty
 
         # Validate essential config keys
-        required_keys = ['participant_id_column_original', 'item_column_map']
+        required_keys = [self.CONFIG_KEY_PID_ORIGINAL, self.CONFIG_KEY_ITEM_MAP]
         for key in required_keys:
             if key not in config:
                 self.logger.error(f"QuestionnairePreprocessor - Missing required key in config: '{key}'")
                 return None
-        if not config['item_column_map']: # Check if the map itself is empty
-            self.logger.error("QuestionnairePreprocessor - 'item_column_map' cannot be empty.")
+        if not config[self.CONFIG_KEY_ITEM_MAP]: # Check if the map itself is empty
+            self.logger.error(f"QuestionnairePreprocessor - '{self.CONFIG_KEY_ITEM_MAP}' cannot be empty.")
             return None
-
+            
         # Make a copy to avoid modifying the original DataFrame passed in
         df = input_df.copy()
 
         # --- "Finding" (selecting and renaming) data ---
         pid_col_original = config['participant_id_column_original']
         item_map = config['item_column_map']
-        output_pid_name = config.get('output_participant_id_col_name', 'participant_id')
+        output_pid_name = config.get(self.CONFIG_KEY_OUTPUT_PID_NAME, self.DEFAULT_OUTPUT_PID_COL_NAME)
 
         if pid_col_original not in df.columns:
             self.logger.error(f"QuestionnairePreprocessor - Participant ID column '{pid_col_original}' not found in the input DataFrame.")

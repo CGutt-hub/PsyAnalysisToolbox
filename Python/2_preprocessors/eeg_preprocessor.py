@@ -2,6 +2,15 @@ import mne
 from mne_icalabel import label_components # For automatic ICA component labeling
 
 class EEGPreprocessor:
+    # Default internal processing parameters
+    DEFAULT_EEG_REFERENCE = 'average'
+    DEFAULT_EEG_REFERENCE_PROJECTION = True
+
+    DEFAULT_FILTER_FIR_DESIGN = 'firwin'
+
+    DEFAULT_ICA_MAX_ITER = 'auto' # MNE default
+    DEFAULT_ICA_LABELING_METHOD = 'iclabel' # Method for mne_icalabel
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("EEGPreprocessor initialized.")
@@ -41,13 +50,17 @@ class EEGPreprocessor:
                  raw_eeg.load_data(verbose=False)
             self.logger.info(f"EEGPreprocessor - Filtering EEG: {eeg_filter_band_config[0]}-{eeg_filter_band_config[1]} Hz.")
             raw_eeg.filter(l_freq=eeg_filter_band_config[0], h_freq=eeg_filter_band_config[1], 
-                           fir_design='firwin', verbose=False)
+                           fir_design=self.DEFAULT_FILTER_FIR_DESIGN, verbose=False)
 
-            self.logger.info("EEGPreprocessor - Setting average reference.")
-            raw_eeg.set_eeg_reference('average', projection=True, verbose=False)
+            self.logger.info(f"EEGPreprocessor - Setting {self.DEFAULT_EEG_REFERENCE} reference (projection={self.DEFAULT_EEG_REFERENCE_PROJECTION}).")
+            raw_eeg.set_eeg_reference(self.DEFAULT_EEG_REFERENCE, projection=self.DEFAULT_EEG_REFERENCE_PROJECTION, verbose=False)
+
             self.logger.info(f"EEGPreprocessor - Fitting ICA with {ica_n_components_config} components.")
-            ica = mne.preprocessing.ICA(n_components=ica_n_components_config, random_state=ica_random_state_config, max_iter='auto')
+            ica = mne.preprocessing.ICA(n_components=ica_n_components_config, 
+                                        random_state=ica_random_state_config, 
+                                        max_iter=self.DEFAULT_ICA_MAX_ITER)
             ica.fit(raw_eeg, verbose=False)
+
 
             # Automatic artifact labeling (optional, requires mne_icalabel)
             self.logger.info("EEGPreprocessor - Attempting automatic ICA component labeling.")
@@ -56,7 +69,7 @@ class EEGPreprocessor:
                 labels = component_labels["labels"]
                 probabilities = component_labels["y_pred_proba"]
                 
-                exclude_idx = [
+                exclude_idx = [ # Indices of components to exclude
                     idx for idx, label in enumerate(labels)
                     if label not in ica_accept_labels_config and 
                        probabilities[idx, list(component_labels['classes']).index(label)] > ica_reject_threshold_config

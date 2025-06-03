@@ -5,6 +5,11 @@ import neurokit2 as nk
 from typing import Tuple, Optional # Added for more specific return type hinting
 
 class ECGPreprocessor:
+    # Default parameters
+    DEFAULT_RPEAK_DETECTION_METHOD = "neurokit" # Default for nk.ecg_peaks
+    DEFAULT_RPEAK_FILENAME_SUFFIX = "_ecg_rpeak_times.csv"
+    DEFAULT_RPEAK_COLUMN_NAME = "R_Peak_Time_s"
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("ECGPreprocessor initialized.")
@@ -14,7 +19,7 @@ class ECGPreprocessor:
                          ecg_sfreq: float,
                          participant_id: str,
                          preproc_results_dir: str,
-                         ecg_rpeak_method_config: str) -> Tuple[Optional[str], Optional[np.ndarray]]:
+                         ecg_rpeak_method_config: str = DEFAULT_RPEAK_DETECTION_METHOD) -> Tuple[Optional[str], Optional[np.ndarray]]:
         """Preprocesses ECG data to detect R-peaks and calculate NN intervals.
 
         Args:
@@ -22,7 +27,8 @@ class ECGPreprocessor:
             ecg_sfreq (float): The sampling frequency of the ECG signal.
             participant_id (str): The ID of the participant.
             preproc_results_dir (str): Directory to save intermediate results.
-            ecg_rpeak_method_config (str): The method to use for R-peak detection (e.g., 'neurokit', 'pantompkins1985').
+            ecg_rpeak_method_config (str): The method for R-peak detection.
+                                           Defaults to ECGPreprocessor.DEFAULT_RPEAK_DETECTION_METHOD.
 
         Returns:
             tuple: (rpeak_times_path, rpeaks_samples_array)
@@ -54,8 +60,8 @@ class ECGPreprocessor:
             rpeak_times_s = rpeaks / ecg_sfreq
 
             # 4. Save results
-            rpeak_times_df = pd.DataFrame({'R_Peak_Time_s': rpeak_times_s})
-            rpeak_times_path = os.path.join(preproc_results_dir, f'{participant_id}_ecg_rpeak_times.csv')
+            rpeak_times_df = pd.DataFrame({self.DEFAULT_RPEAK_COLUMN_NAME: rpeak_times_s})
+            rpeak_times_path = os.path.join(preproc_results_dir, f'{participant_id}{self.DEFAULT_RPEAK_FILENAME_SUFFIX}')
             rpeak_times_df.to_csv(rpeak_times_path, index=False)
 
             self.logger.info(f"ECGPreprocessor - R-peak times saved to {rpeak_times_path}")

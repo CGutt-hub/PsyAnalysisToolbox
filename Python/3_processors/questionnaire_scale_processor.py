@@ -1,8 +1,11 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, Optional, Any, Union
 
 class QuestionnaireScaleProcessor:
+    # Default parameters for scale scoring
+    DEFAULT_SCORING_METHOD = "sum"
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("QuestionnaireScaleProcessor initialized.")
@@ -66,7 +69,7 @@ class QuestionnaireScaleProcessor:
 
         for scale_name, definition in scale_definitions.items():
             self.logger.debug(f"QuestionnaireScaleProcessor - Scoring scale: {scale_name}")
-            items = definition.get("items", [])
+            items = definition.get("items", []) # No default constant needed for 'items' as it's required
             scoring_method = definition.get("scoring_method", "sum").lower()
             reverse_coded = definition.get("reverse_coded_items", {})
             min_valid_ratio = definition.get("min_valid_items_ratio")
@@ -98,9 +101,9 @@ class QuestionnaireScaleProcessor:
             
             # Calculate score based on method
             if scoring_method == "sum":
-                raw_scores = scale_df_temp.sum(axis=1, skipna=True) # type: ignore # skipna=True sums available data
+                raw_scores = scale_df_temp.sum(axis=1, skipna=True) # skipna=True sums available data
             elif scoring_method == "mean":
-                raw_scores = scale_df_temp.mean(axis=1, skipna=True) # type: ignore
+                raw_scores = scale_df_temp.mean(axis=1, skipna=True)
             else:
                 self.logger.warning(f"QuestionnaireScaleProcessor - Unknown scoring method '{scoring_method}' for scale '{scale_name}'. Skipping.")
                 scores_df[scale_name] = np.nan

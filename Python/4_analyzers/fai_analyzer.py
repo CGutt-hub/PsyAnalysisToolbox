@@ -2,6 +2,9 @@ import numpy as np
 from typing import Dict, List, Tuple
 
 class FAIAnalyzer:
+    # Default parameters for FAI calculation
+    DEFAULT_MIN_POWER_THRESHOLD = 1e-12
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("FAIAnalyzer initialized.")
@@ -10,7 +13,7 @@ class FAIAnalyzer:
                              psd_results_all_bands: Dict[str, Dict[str, Dict[str, float]]],
                              fai_band_name: str,
                              fai_electrode_pairs_config: List[Tuple[str, str]],
-                             min_power_threshold: float = 1e-12
+                             min_power_threshold: float = DEFAULT_MIN_POWER_THRESHOLD
                              ) -> Dict[str, Dict[str, float]]:
         """
         Computes Frontal Asymmetry Index (FAI) from pre-computed PSD results.
@@ -19,7 +22,8 @@ class FAIAnalyzer:
             psd_results_all_bands (dict): PSD results in the format {'condition': {'band': {'channel': power}}}.
             fai_band_name (str): The name of the frequency band in psd_results_all_bands to use for FAI.
             fai_electrode_pairs_config (list): List of tuples defining electrode pairs for FAI (e.g., [('F3', 'F4')]).
-            min_power_threshold (float): Minimum power value to consider for FAI calculation; values below this (and <=0) lead to NaN.
+            min_power_threshold (float): Minimum power value to consider for FAI calculation;
+                                         values below this (and <=0) lead to NaN. Defaults to FAIAnalyzer.DEFAULT_MIN_POWER_THRESHOLD.
 
         Returns:
             dict: FAI results in the format {'condition': {'pair_name': fai_value}}.

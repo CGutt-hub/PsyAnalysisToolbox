@@ -5,6 +5,10 @@ import neurokit2 as nk
 from typing import Tuple, Optional, Dict, Any
 
 class EDASCRProcessor:
+    # Default parameters for SCR processing
+    DEFAULT_SCR_PEAK_METHOD = "neurokit"
+    DEFAULT_SCR_AMPLITUDE_MIN = 0.01
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("EDASCRProcessor initialized.")
@@ -14,8 +18,8 @@ class EDASCRProcessor:
                                        eda_sampling_rate: float,
                                        participant_id: str,
                                        output_dir: str,
-                                       scr_peak_method: str = "neurokit",
-                                       scr_amplitude_min: float = 0.01
+                                       scr_peak_method: str = DEFAULT_SCR_PEAK_METHOD,
+                                       scr_amplitude_min: float = DEFAULT_SCR_AMPLITUDE_MIN
                                        ) -> Tuple[Optional[str], Optional[pd.DataFrame]]:
         """
         Detects all SCRs from a phasic EDA signal and extracts their features.
@@ -25,8 +29,8 @@ class EDASCRProcessor:
             eda_sampling_rate (float): Sampling rate of the EDA signal.
             participant_id (str): Participant ID for naming output files.
             output_dir (str): Directory to save the SCR features file.
-            scr_peak_method (str): Method for SCR peak detection in NeuroKit2.
-            scr_amplitude_min (float): Minimum amplitude threshold for detecting SCR peaks.
+            scr_peak_method (str): Method for SCR peak detection. Defaults to EDASCRProcessor.DEFAULT_SCR_PEAK_METHOD.
+            scr_amplitude_min (float): Minimum amplitude threshold for SCRs. Defaults to EDASCRProcessor.DEFAULT_SCR_AMPLITUDE_MIN.
 
         Returns:
             Tuple containing:

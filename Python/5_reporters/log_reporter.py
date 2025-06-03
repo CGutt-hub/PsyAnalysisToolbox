@@ -1,21 +1,29 @@
 import logging
 import os
 
+# Module-level defaults for LogReporter
+LOG_REPORTER_DEFAULT_LOG_LEVEL_STR = "INFO"
+LOG_REPORTER_DEFAULT_LOG_FORMATTER = '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+LOG_REPORTER_DEFAULT_LOG_FILENAME_TEMPLATE = "{participant_id}_processing.log"
+
 class LogReporter:
     """
     Manages a dedicated logger for a single participant, writing to a specific file.
     """
-    def __init__(self, participant_base_output_dir, participant_id, log_level_str="INFO"):
+    def __init__(self, participant_base_output_dir: str, 
+                 participant_id: str, 
+                 log_level_str: str = LOG_REPORTER_DEFAULT_LOG_LEVEL_STR):
         """
         Initializes the participant-specific logger.
 
         Args:
             participant_base_output_dir (str): The base output directory for this participant.
             participant_id (str): The ID of the participant.
-            log_level_str (str): The desired logging level ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL').
+            log_level_str (str): The desired logging level string (e.g., 'DEBUG', 'INFO').
+                                 Defaults to LOG_REPORTER_DEFAULT_LOG_LEVEL_STR.
         """
         self.participant_id = participant_id
-        self.log_file_path = os.path.join(participant_base_output_dir, f"{participant_id}_processing.log")
+        self.log_file_path = os.path.join(participant_base_output_dir, LOG_REPORTER_DEFAULT_LOG_FILENAME_TEMPLATE.format(participant_id=participant_id))
         self._logger = logging.getLogger(f"ParticipantLogger_{participant_id}")
         self._handler = None # To store the file handler
 
@@ -29,22 +37,19 @@ class LogReporter:
                 # Ensure the directory exists before creating the file
                 os.makedirs(os.path.dirname(self.log_file_path), exist_ok=True)
                 self._handler = logging.FileHandler(self.log_file_path, mode='w')
-                # Set handler level based on config
-                log_level = getattr(logging, log_level_str.upper(), logging.INFO)
+                # Set handler level based on provided or default log_level_str
+                log_level = getattr(logging, log_level_str.upper(), getattr(logging, LOG_REPORTER_DEFAULT_LOG_LEVEL_STR.upper()))
                 self._handler.setLevel(log_level)
 
                 # Create formatter
-                formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+                formatter = logging.Formatter(LOG_REPORTER_DEFAULT_LOG_FORMATTER)
                 self._handler.setFormatter(formatter)
 
                 # Add handler to logger
                 self._logger.addHandler(self._handler)
                 self._logger.info(f"ParticipantLogger initialized for {participant_id}. Logging to {self.log_file_path} at level {log_level_str}.")
             except Exception as e:
-                # Fallback to console logging if file handler fails
-                # Note: This error will likely only appear in the main orchestrator log
-                # because the participant logger's file handler failed to initialize.
-                print(f"ERROR: Failed to create file handler for participant {participant_id}: {e}. Logging will only go to main orchestrator log.")
+                print(f"CRITICAL ERROR (LogReporter): Failed to create file handler for participant {participant_id} at {self.log_file_path}: {e}. Participant-specific logs will NOT be saved to this file. They may appear in the main orchestrator log if configured, or be lost if not.")
                 self._handler = None # Ensure handler is None if creation failed
 
 
@@ -65,13 +70,17 @@ class LogReporter:
                 if self._handler in self._logger.handlers:
                      self._logger.removeHandler(self._handler)
                 self._handler.close()
+                self._handler = None # Mark handler as closed and removed
                 # Note: We don't log here because the handler is being closed.
                 # The main orchestrator log should indicate participant processing is finished.
             except Exception as e:
                 # Log to the main logger if closing fails, as participant logger might be unusable
                 # We can't rely on the participant logger here, so print or use a known main logger
                 main_logger = logging.getLogger("MainOrchestrator") # Assuming this logger exists
-                if main_logger:
+                # Check if the main_logger actually exists and has handlers to avoid issues
+                if main_logger and main_logger.hasHandlers():
                     main_logger.error(f"Error closing log handler for participant {self.participant_id}: {e}", exc_info=True)
                 else:
                     print(f"ERROR: Error closing log handler for participant {self.participant_id}: {e}")
+                # Even if closing failed, subsequent calls to close_handlers should not re-attempt on this instance
+                self._handler = None

@@ -5,22 +5,29 @@ from mne_nirs.experimental_design import make_first_level_design_matrix
 from typing import Dict, List, Optional, Any
 
 class FNIRSDesignMatrixProcessor:
+    # Default parameters for design matrix creation
+    DEFAULT_HRF_MODEL = 'glover'
+    DEFAULT_DRIFT_MODEL = 'polynomial'
+    DEFAULT_DRIFT_ORDER = 1
+    DEFAULT_FIR_DELAYS: Optional[List[float]] = None # MNE-NIRS default is [0, 1, ..., 5] if FIR is chosen
+    DEFAULT_OVERSAMPLING = 50
+
     def __init__(self, logger,
-                 hrf_model_config: str = 'glover',
-                 drift_model_config: str = 'polynomial',
-                 drift_order_config: int = 1,
-                 fir_delays_config: Optional[List[float]] = None,
-                 oversampling_config: int = 50):
+                 hrf_model_config: str = DEFAULT_HRF_MODEL,
+                 drift_model_config: str = DEFAULT_DRIFT_MODEL,
+                 drift_order_config: int = DEFAULT_DRIFT_ORDER,
+                 fir_delays_config: Optional[List[float]] = DEFAULT_FIR_DELAYS,
+                 oversampling_config: int = DEFAULT_OVERSAMPLING):
         """
         Initializes the FNIRSDesignMatrixProcessor.
 
         Args:
             logger: Logger object.
-            hrf_model_config (str): HRF model for the GLM (e.g., 'glover', 'spm', 'fir').
-            drift_model_config (str): Drift model (e.g., 'polynomial', 'cosine').
-            drift_order_config (int): Order of the drift model (for polynomial).
-            fir_delays_config (Optional[List[float]]): Delays for FIR model, if hrf_model is 'fir'.
-            oversampling_config (int): Oversampling factor for HRF convolution.
+            hrf_model_config (str): HRF model for the GLM. Defaults to FNIRSDesignMatrixProcessor.DEFAULT_HRF_MODEL.
+            drift_model_config (str): Drift model. Defaults to FNIRSDesignMatrixProcessor.DEFAULT_DRIFT_MODEL.
+            drift_order_config (int): Order of the drift model. Defaults to FNIRSDesignMatrixProcessor.DEFAULT_DRIFT_ORDER.
+            fir_delays_config (Optional[List[float]]): Delays for FIR model. Defaults to FNIRSDesignMatrixProcessor.DEFAULT_FIR_DELAYS.
+            oversampling_config (int): Oversampling factor for HRF. Defaults to FNIRSDesignMatrixProcessor.DEFAULT_OVERSAMPLING.
         """
         self.logger = logger
         self.hrf_model_config = hrf_model_config

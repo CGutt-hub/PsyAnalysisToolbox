@@ -4,6 +4,11 @@ import numpy as np
 from typing import Union, Dict, Optional, List # For type hinting
 
 class CorrelationAnalyzer:
+    # Default parameters for correlation calculation
+    DEFAULT_CORR_METHOD = 'pearson'
+    DEFAULT_SERIES1_NAME = 'Series1'
+    DEFAULT_SERIES2_NAME = 'Series2'
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("CorrelationAnalyzer initialized.")
@@ -11,19 +16,18 @@ class CorrelationAnalyzer:
     def calculate_correlation(self, 
                               series1: Union[pd.Series, np.ndarray], 
                               series2: Union[pd.Series, np.ndarray], 
-                              method: str = 'pearson', 
-                              name1: str = 'Series1', 
-                              name2: str = 'Series2') -> Optional[Dict[str, Union[float, List[float], int, str]]]:
+                              method: str = DEFAULT_CORR_METHOD, 
+                              name1: str = DEFAULT_SERIES1_NAME, 
+                              name2: str = DEFAULT_SERIES2_NAME) -> Optional[Dict[str, Union[float, List[float], int, str]]]:
         """
         Calculates correlation between two pandas Series.
 
         Args:
             series1 (Union[pd.Series, np.ndarray]): First data series.
             series2 (Union[pd.Series, np.ndarray]): Second data series.
-            method (str): Correlation method (e.g., 'pearson', 'spearman', 'kendall'). 
-                          Pingouin handles validation of supported methods.
-            name1 (str): Optional name for the first series.
-            name2 (str): Optional name for the second series.
+            method (str): Correlation method. Defaults to CorrelationAnalyzer.DEFAULT_CORR_METHOD.
+            name1 (str): Optional name for the first series. Defaults to CorrelationAnalyzer.DEFAULT_SERIES1_NAME.
+            name2 (str): Optional name for the second series. Defaults to CorrelationAnalyzer.DEFAULT_SERIES2_NAME.
         Returns:
             Optional[Dict[str, Union[float, List[float], int, str]]]: 
                 A dictionary containing correlation results (r, p-value, CI95%, n, etc.) 

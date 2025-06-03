@@ -5,6 +5,11 @@ import pandas as pd # Added for DataFrame type hint
 from typing import Dict, Optional # For type hinting
 
 class SCRAnalyzer:
+    # Default parameters for SCR analysis output keys
+    DEFAULT_METRIC_PREFIX = "eda_"
+    DEFAULT_PHASIC_MEAN_SUFFIX = "phasic_mean"
+    DEFAULT_SCR_COUNT_SUFFIX = "scr_count"
+
     def __init__(self, logger):
         self.logger = logger # type: ignore # Logger is expected to be set by the caller
         self.logger.info("SCRAnalyzer initialized.")
@@ -93,8 +98,12 @@ class SCRAnalyzer:
                     else:
                          self.logger.debug(f"SCRAnalyzer - Invalid EDA segment indices for condition '{condition_name}' at time {start_time_sec:.2f}s. Start: {start_idx_eda}, End: {end_idx_eda}, Signal Len: {len(phasic_eda_full_signal_array)}")
                 # Calculate mean phasic amplitude and mean SCR count for the condition
-                if condition_phasic_means: calculated_metrics[f'eda_phasic_mean_{condition_name}'] = np.nanmean(condition_phasic_means)
-                if condition_scr_counts: calculated_metrics[f'eda_scr_count_{condition_name}'] = np.nanmean(condition_scr_counts)
+                if condition_phasic_means:
+                    metric_key = f"{self.DEFAULT_METRIC_PREFIX}{self.DEFAULT_PHASIC_MEAN_SUFFIX}_{condition_name}"
+                    calculated_metrics[metric_key] = np.nanmean(condition_phasic_means)
+                if condition_scr_counts:
+                    metric_key = f"{self.DEFAULT_METRIC_PREFIX}{self.DEFAULT_SCR_COUNT_SUFFIX}_{condition_name}"
+                    calculated_metrics[metric_key] = np.nanmean(condition_scr_counts)
             self.logger.info("SCRAnalyzer - Condition-specific EDA feature calculation completed.")
         except Exception as e: # Catch any unexpected errors during the process
             self.logger.error(f"SCRAnalyzer - Error calculating EDA features: {e}", exc_info=True)

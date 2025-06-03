@@ -5,6 +5,9 @@ from scipy.interpolate import interp1d
 from typing import Tuple, Optional
 
 class ECGHRVProcessor:
+    # Default parameters for HRV processing
+    DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV = 4.0 # Hz
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("ECGHRVProcessor initialized.")
@@ -14,7 +17,7 @@ class ECGHRVProcessor:
                               original_sfreq: float,
                               participant_id: str,
                               output_dir: str,
-                              target_sfreq_continuous_hrv: float = 4.0  # Default to 4Hz for continuous HRV
+                              target_sfreq_continuous_hrv: float = DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV
                               ) -> Tuple[Optional[str], Optional[np.ndarray],
                                          Optional[np.ndarray], Optional[np.ndarray], Optional[str]]:
         """
@@ -25,7 +28,7 @@ class ECGHRVProcessor:
             original_sfreq (float): Sampling frequency of the signal from which R-peaks were derived.
             participant_id (str): Participant ID for naming output files.
             output_dir (str): Directory to save processed files (NN-intervals, continuous HRV).
-            target_sfreq_continuous_hrv (float): Target sampling frequency for the continuous HRV signal.
+            target_sfreq_continuous_hrv (float): Target sfreq for continuous HRV. Defaults to ECGHRVProcessor.DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV.
 
         Returns:
             Tuple containing:

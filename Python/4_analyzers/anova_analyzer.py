@@ -4,11 +4,35 @@ import numpy as np
 import re # For parsing column names
 
 class ANOVAAnalyzer:
+    # Default parameters for ANOVA methods
+    DEFAULT_ANOVA_EFFSIZE = "np2"
+    DEFAULT_ANOVA_DETAILED = True
+    DEFAULT_POSTHOC_P_ADJUST = "holm"
+    DEFAULT_POSTHOC_EFFSIZE = "cohen"
+
+    # Default parameters for PLV data preparation
+    DEFAULT_PLV_METRIC_PREFIX = "plv_avg_"
+    DEFAULT_PLV_ID_VARS_COL = 'participant_id'
+    DEFAULT_PLV_VALUE_NAME_OUTPUT = 'plv_value'
+    DEFAULT_PLV_CONDITION_CAPTURE_GROUP = 'condition'
+    DEFAULT_PLV_MIDDLE_FACTOR_CAPTURE_GROUP = 'middle_factor'
+    DEFAULT_PLV_ALLOW_OPTIONAL_MIDDLE_FACTOR = True
+
+    # Default parameters for FAI data preparation
+    DEFAULT_FAI_BAND_FILTER = "alpha" # Note: This is a filter value, not just a column name part
+    DEFAULT_FAI_METRIC_PREFIX = "fai_"
+    DEFAULT_FAI_ID_VARS_COL = 'participant_id'
+    DEFAULT_FAI_VALUE_NAME_OUTPUT = 'fai_value'
+    DEFAULT_FAI_PAIR_CAPTURE_GROUP = 'hemisphere_pair'
+    DEFAULT_FAI_CONDITION_CAPTURE_GROUP = 'condition'
+    DEFAULT_FAI_COL_PATTERN_TEMPLATE = r"^{metric_prefix_val}{band_filter_val}_(?P<{pair_group_val}>F[pAF]?\d_F[pAF]?\d)_(?P<{condition_group_val}>.*)$"
+
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("ANOVAAnalyzer initialized.")
 
-    def perform_rm_anova(self, data_df, dv, within, subject, effsize="np2", detailed=True):
+    def perform_rm_anova(self, data_df, dv, within, subject, effsize=DEFAULT_ANOVA_EFFSIZE, detailed=DEFAULT_ANOVA_DETAILED):
         """
         Performs a Repeated Measures ANOVA.
         Args:
@@ -16,8 +40,8 @@ class ANOVAAnalyzer:
             dv (str): Dependent variable column name.
             within (str or list): Within-subject factor column name(s).
             subject (str): Subject identifier column name.
-            effsize (str): Effect size to compute.
-            detailed (bool): Whether to return detailed output.
+            effsize (str): Effect size to compute. Defaults to ANOVAAnalyzer.DEFAULT_ANOVA_EFFSIZE.
+            detailed (bool): Whether to return detailed output. Defaults to ANOVAAnalyzer.DEFAULT_ANOVA_DETAILED.
         Returns:
             pd.DataFrame: ANOVA results table, or None if error.
         """
@@ -46,7 +70,7 @@ class ANOVAAnalyzer:
             self.logger.error(f"ANOVAAnalyzer - Error performing RM ANOVA: {e}", exc_info=True)
             return None
 
-    def perform_posthoc_tests(self, data_df, dv, within, subject, p_adjust='holm', effsize='cohen'):
+    def perform_posthoc_tests(self, data_df, dv, within, subject, p_adjust=DEFAULT_POSTHOC_P_ADJUST, effsize=DEFAULT_POSTHOC_EFFSIZE):
         """
         Performs pairwise t-tests as post-hoc tests, typically after a significant RM ANOVA.
         Args:
@@ -54,8 +78,8 @@ class ANOVAAnalyzer:
             dv (str): Dependent variable column name.
             within (str or list): Within-subject factor column name(s) for pairwise comparisons.
             subject (str): Subject identifier column name.
-            p_adjust (str): Method for p-value correction (e.g., 'holm', 'bonferroni').
-            effsize (str): Effect size to compute for pairwise tests.
+            p_adjust (str): Method for p-value correction. Defaults to ANOVAAnalyzer.DEFAULT_POSTHOC_P_ADJUST.
+            effsize (str): Effect size to compute for pairwise tests. Defaults to ANOVAAnalyzer.DEFAULT_POSTHOC_EFFSIZE.
         Returns:
             pd.DataFrame: Post-hoc test results, or None if error or no significant factor.
         """
@@ -85,12 +109,12 @@ class ANOVAAnalyzer:
     def prepare_plv_data_for_anova(self, df_agg, 
                                    eeg_band_filter, 
                                    autonomic_type_filter,
-                                   metric_prefix="plv_avg_",
-                                   id_vars_col='participant_id',
-                                   value_name_output='plv_value',
-                                   condition_capture_group_name='condition',
-                                   middle_factor_capture_group_name='middle_factor',
-                                   allow_optional_middle_factor=True):
+                                   metric_prefix=DEFAULT_PLV_METRIC_PREFIX,
+                                   id_vars_col=DEFAULT_PLV_ID_VARS_COL,
+                                   value_name_output=DEFAULT_PLV_VALUE_NAME_OUTPUT,
+                                   condition_capture_group_name=DEFAULT_PLV_CONDITION_CAPTURE_GROUP,
+                                   middle_factor_capture_group_name=DEFAULT_PLV_MIDDLE_FACTOR_CAPTURE_GROUP,
+                                   allow_optional_middle_factor=DEFAULT_PLV_ALLOW_OPTIONAL_MIDDLE_FACTOR):
         """
         Prepares (melts and parses) PLV data from wide aggregated format to long format for ANOVA.
         This method is designed to be flexible with column naming conventions.
@@ -99,12 +123,12 @@ class ANOVAAnalyzer:
             df_agg (pd.DataFrame): DataFrame with aggregated PLV data in wide format.
             eeg_band_filter (str): Specific EEG band to filter for (e.g., "Alpha").
             autonomic_type_filter (str): Specific autonomic type to filter for (e.g., "HRV").
-            metric_prefix (str): The prefix of the PLV columns (e.g., "plv_avg_").
-            id_vars_col (str): Name of the participant identifier column.
-            value_name_output (str): Name for the column containing PLV values in the long format.
-            condition_capture_group_name (str): Name for the regex capture group for the condition.
-            middle_factor_capture_group_name (str): Name for the regex capture group for an optional middle factor.
-            allow_optional_middle_factor (bool): If True, expects a regex that can handle an optional middle factor.
+            metric_prefix (str): The prefix of the PLV columns. Defaults to ANOVAAnalyzer.DEFAULT_PLV_METRIC_PREFIX.
+            id_vars_col (str): Name of the participant identifier column. Defaults to ANOVAAnalyzer.DEFAULT_PLV_ID_VARS_COL.
+            value_name_output (str): Name for the column containing PLV values. Defaults to ANOVAAnalyzer.DEFAULT_PLV_VALUE_NAME_OUTPUT.
+            condition_capture_group_name (str): Regex capture group name for condition. Defaults to ANOVAAnalyzer.DEFAULT_PLV_CONDITION_CAPTURE_GROUP.
+            middle_factor_capture_group_name (str): Regex capture group name for middle factor. Defaults to ANOVAAnalyzer.DEFAULT_PLV_MIDDLE_FACTOR_CAPTURE_GROUP.
+            allow_optional_middle_factor (bool): If regex handles optional middle factor. Defaults to ANOVAAnalyzer.DEFAULT_PLV_ALLOW_OPTIONAL_MIDDLE_FACTOR.
         Returns:
             pd.DataFrame: DataFrame in long format.
         """
@@ -170,14 +194,14 @@ class ANOVAAnalyzer:
         return df_plv_long
 
     def prepare_fai_data_for_anova(self, df_agg, 
-                                   band_name_filter="alpha",
-                                   metric_prefix="fai_",
-                                   id_vars_col='participant_id',
-                                   value_name_output='fai_value',
-                                   pair_capture_group_name='hemisphere_pair',
-                                   condition_capture_group_name='condition',
+                                   band_name_filter=DEFAULT_FAI_BAND_FILTER,
+                                   metric_prefix=DEFAULT_FAI_METRIC_PREFIX,
+                                   id_vars_col=DEFAULT_FAI_ID_VARS_COL,
+                                   value_name_output=DEFAULT_FAI_VALUE_NAME_OUTPUT,
+                                   pair_capture_group_name=DEFAULT_FAI_PAIR_CAPTURE_GROUP,
+                                   condition_capture_group_name=DEFAULT_FAI_CONDITION_CAPTURE_GROUP,
                                    # Default regex pattern for FAI columns like "fai_alpha_F4_F3_Positive".
-                                   fai_col_pattern_template=r"^{metric_prefix_val}{band_filter_val}_(?P<{pair_group_val}>F[pAF]?\d_F[pAF]?\d)_(?P<{condition_group_val}>.*)$"):
+                                   fai_col_pattern_template=DEFAULT_FAI_COL_PATTERN_TEMPLATE):
         """
         Prepares (melts and parses) FAI data from wide aggregated format to long format for ANOVA.
         """

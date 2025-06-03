@@ -4,6 +4,16 @@ import os
 import numpy as np
 
 class EDAPreprocessor:
+    # Default parameters for the NeuroKit2 processing pipeline
+    # This is the 'method' argument for nk.eda_process, which controls nk.eda_clean's method.
+    DEFAULT_EDA_CLEANING_METHOD = "neurokit"
+
+    # Default column names from nk.eda_process output and for saved files
+    DEFAULT_PHASIC_COL_NAME = "EDA_Phasic"
+    DEFAULT_TONIC_COL_NAME = "EDA_Tonic"
+    DEFAULT_PHASIC_FILENAME_SUFFIX = "_phasic_eda.csv"
+    DEFAULT_TONIC_FILENAME_SUFFIX = "_tonic_eda.csv"
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("EDAPreprocessor initialized.")
@@ -43,17 +53,21 @@ class EDAPreprocessor:
                     self.logger.error("EDAPreprocessor - EDA signal is not 1D. Cannot process.")
                     return None, None, None, None
 
-            eda_signals, _ = nk.eda_process(eda_signal_raw, sampling_rate=int(eda_sampling_rate))
-            phasic_eda = eda_signals['EDA_Phasic'].values # Ensure it's a numpy array
-            tonic_eda = eda_signals['EDA_Tonic'].values   # Ensure it's a numpy array
+            # Use the defined default cleaning method for nk.eda_process
+            eda_signals, _ = nk.eda_process(eda_signal_raw, 
+                                            sampling_rate=int(eda_sampling_rate), 
+                                            method=self.DEFAULT_EDA_CLEANING_METHOD)
+            
+            phasic_eda = eda_signals[self.DEFAULT_PHASIC_COL_NAME].values
+            tonic_eda = eda_signals[self.DEFAULT_TONIC_COL_NAME].values
             self.logger.debug("EDAPreprocessor - EDA signal decomposed, phasic and tonic components extracted.")
 
-            phasic_eda_path = os.path.join(output_dir, f"{participant_id}_phasic_eda.csv")
-            pd.DataFrame(phasic_eda, columns=['EDA_Phasic']).to_csv(phasic_eda_path, index=False)
+            phasic_eda_path = os.path.join(output_dir, f"{participant_id}{self.DEFAULT_PHASIC_FILENAME_SUFFIX}")
+            pd.DataFrame(phasic_eda, columns=[self.DEFAULT_PHASIC_COL_NAME]).to_csv(phasic_eda_path, index=False)
             self.logger.info(f"EDAPreprocessor - Phasic EDA saved to {phasic_eda_path}")
 
-            tonic_eda_path = os.path.join(output_dir, f"{participant_id}_tonic_eda.csv")
-            pd.DataFrame(tonic_eda, columns=['EDA_Tonic']).to_csv(tonic_eda_path, index=False)
+            tonic_eda_path = os.path.join(output_dir, f"{participant_id}{self.DEFAULT_TONIC_FILENAME_SUFFIX}")
+            pd.DataFrame(tonic_eda, columns=[self.DEFAULT_TONIC_COL_NAME]).to_csv(tonic_eda_path, index=False)
             self.logger.info(f"EDAPreprocessor - Tonic EDA saved to {tonic_eda_path}")
 
             return phasic_eda_path, tonic_eda_path, phasic_eda, tonic_eda

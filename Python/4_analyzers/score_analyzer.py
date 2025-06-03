@@ -4,6 +4,11 @@ import os
 from typing import Dict, List, Optional
 
 class ScoreAnalyzer:
+    # Default parameters for score analysis
+    DEFAULT_SAVE_RESULTS_FLAG = True
+    DEFAULT_RESULTS_PREFIX = "scale_analysis"
+    DEFAULT_CORRELATION_METHOD = "pearson"
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("ScaleScoreAnalyzer initialized.")
@@ -13,8 +18,9 @@ class ScoreAnalyzer:
                        participant_id_col: str,
                        scale_columns: Optional[List[str]] = None,
                        output_dir: Optional[str] = None,
-                       save_results: bool = True,
-                       results_prefix: str = "scale_analysis") -> Dict[str, Optional[pd.DataFrame]]:
+                       save_results: bool = DEFAULT_SAVE_RESULTS_FLAG,
+                       results_prefix: str = DEFAULT_RESULTS_PREFIX
+                       ) -> Dict[str, Optional[pd.DataFrame]]:
         """
         Analyzes questionnaire scale scores to compute descriptive statistics and correlations.
 
@@ -24,8 +30,8 @@ class ScoreAnalyzer:
             scale_columns (Optional[List[str]]): List of column names representing the scales to analyze.
                                                  If None, all numeric columns except participant_id_col
                                                  will be considered as scales.
-            output_dir (Optional[str]): Directory to save the analysis results.
-                                        Required if save_results is True.
+            output_dir (Optional[str]): Directory to save the analysis results. Required if save_results is True.
+            save_results (bool): If True, saves descriptive statistics and correlation matrix to CSV. Defaults to ScoreAnalyzer.DEFAULT_SAVE_RESULTS_FLAG.
             save_results (bool): If True, saves descriptive statistics and correlation matrix to CSV.
             results_prefix (str): Prefix for the saved output files.
 
@@ -93,7 +99,7 @@ class ScoreAnalyzer:
         if len(actual_scale_columns) >= 2: # Need at least 2 scales for correlation
             try:
                 self.logger.info("ScaleScoreAnalyzer - Calculating correlation matrix.")
-                correlation_df = scales_data_df.corr(method='pearson') # Can make method configurable
+                correlation_df = scales_data_df.corr(method=self.DEFAULT_CORRELATION_METHOD)
                 analysis_results['correlations'] = correlation_df
                 self.logger.debug(f"Correlation matrix:\n{correlation_df}")
 

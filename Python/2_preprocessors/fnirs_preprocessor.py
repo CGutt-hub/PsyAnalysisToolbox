@@ -6,6 +6,12 @@ import os
 import numpy as np
 
 class FNIRSPreprocessor:
+    # Default internal processing parameters
+    DEFAULT_BEER_LAMBERT_REMOVE_OD = True
+    DEFAULT_FILTER_H_TRANS_BANDWIDTH = 'auto'
+    DEFAULT_FILTER_L_TRANS_BANDWIDTH = 'auto'
+    DEFAULT_FILTER_FIR_DESIGN = 'firwin'
+
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("FNIRSPreprocessor initialized.")
@@ -31,11 +37,12 @@ class FNIRSPreprocessor:
             self.logger.warning("FNIRSPreprocessor - No raw fNIRS OD data provided. Skipping.")
             return None
         
-        if not all([beer_lambert_ppf_config is not None, 
-                      short_channel_regression_config is not None, 
-                      motion_correction_method_config is not None, 
-                      filter_band_config is not None]):
-            self.logger.warning("FNIRSPreprocessor - One or more critical fNIRS preprocessing configurations not provided. Skipping.")
+        # Refined input validation: Check for truly required inputs being None
+        if beer_lambert_ppf_config is None:
+             self.logger.error("FNIRSPreprocessor - 'beer_lambert_ppf_config' is required but not provided. Skipping.")
+             return None
+        if filter_band_config is None or not (isinstance(filter_band_config, (tuple, list)) and len(filter_band_config) == 2):
+            self.logger.error("FNIRSPreprocessor - 'filter_band_config' must be a tuple or list of two floats (low, high). Skipping.")
             return None
 
         self.logger.info("FNIRSPreprocessor - Starting fNIRS preprocessing.")
@@ -44,7 +51,9 @@ class FNIRSPreprocessor:
             if hasattr(fnirs_raw_od, '_data') and fnirs_raw_od._data is None and fnirs_raw_od.preload is False:
                 fnirs_raw_od.load_data(verbose=False)
             self.logger.info(f"FNIRSPreprocessor - Applying Beer-Lambert Law (PPF={beer_lambert_ppf_config}).")
-            raw_haemo = mne_nirs.beer_lambert_law(fnirs_raw_od.copy(), ppf=beer_lambert_ppf_config, remove_od=True)
+            raw_haemo = mne_nirs.beer_lambert_law(fnirs_raw_od.copy(), 
+                                                ppf=beer_lambert_ppf_config, 
+                                                remove_od=self.DEFAULT_BEER_LAMBERT_REMOVE_OD)
             
             if short_channel_regression_config:
                 try:
@@ -82,9 +91,9 @@ class FNIRSPreprocessor:
                 corrected_haemo = raw_haemo # Pass through if no method or 'none'
             self.logger.info(f"FNIRSPreprocessor - Applying band-pass filter ({filter_band_config[0]}-{filter_band_config[1]} Hz).")
             corrected_haemo.filter(l_freq=filter_band_config[0], h_freq=filter_band_config[1],
-                                   h_trans_bandwidth='auto', # MNE default or specify
-                                   l_trans_bandwidth='auto', # MNE default or specify
-                                   fir_design='firwin', verbose=False)
+                                   h_trans_bandwidth=self.DEFAULT_FILTER_H_TRANS_BANDWIDTH,
+                                   l_trans_bandwidth=self.DEFAULT_FILTER_L_TRANS_BANDWIDTH,
+                                   fir_design=self.DEFAULT_FILTER_FIR_DESIGN, verbose=False)
             
             self.logger.info("FNIRSPreprocessor - fNIRS preprocessing completed.")
             return corrected_haemo
