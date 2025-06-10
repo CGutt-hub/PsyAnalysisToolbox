@@ -3,25 +3,103 @@ import pyxdf
 import mne
 import numpy as np
 import pandas as pd
-# No direct import of EV_config here; config values will be passed in.
+from typing import Optional
+
+# Module-level defaults for XDFReader stream names
+XDF_READER_DEFAULT_EEG_STREAM_NAME = "DefaultEEGStreamName"
+XDF_READER_DEFAULT_FNIRS_STREAM_NAME = "DefaultFNIRSStreamName"
+XDF_READER_DEFAULT_ECG_STREAM_NAME = "DefaultECGStreamName"
+XDF_READER_DEFAULT_EDA_STREAM_NAME = "DefaultEDAStreamName"
+XDF_READER_DEFAULT_MARKER_STREAM_NAME = "DefaultMarkerStreamName"
 
 class XDFReader:
     def __init__(self, logger,
-                 # Config values passed from EV_analyzer.py (sourced from EV_config.py)
-                 eeg_stream_name="DefaultEEGStreamName", # Provide defaults or make them required
-                 fnirs_stream_name="DefaultFNIRSStreamName",
-                 ecg_stream_name="DefaultECGStreamName",
-                 eda_stream_name="DefaultEDAStreamName",
-                 marker_stream_name="DefaultMarkerStreamName"
+                 eeg_stream_name: Optional[str] = None,
+                 fnirs_stream_name: Optional[str] = None,
+                 ecg_stream_name: Optional[str] = None,
+                 eda_stream_name: Optional[str] = None,
+                 marker_stream_name: Optional[str] = None
                 ):
+        """
+        Initializes the XDFReader with specific or default stream names.
+
+        Args:
+            logger (logging.Logger): Logger instance.
+            eeg_stream_name (Optional[str]): Name of the EEG stream in XDF.
+                                             Defaults to XDF_READER_DEFAULT_EEG_STREAM_NAME.
+            fnirs_stream_name (Optional[str]): Name of the fNIRS stream in XDF.
+                                               Defaults to XDF_READER_DEFAULT_FNIRS_STREAM_NAME.
+            ecg_stream_name (Optional[str]): Name of the ECG stream in XDF.
+                                             Defaults to XDF_READER_DEFAULT_ECG_STREAM_NAME.
+            eda_stream_name (Optional[str]): Name of the EDA stream in XDF.
+                                             Defaults to XDF_READER_DEFAULT_EDA_STREAM_NAME.
+            marker_stream_name (Optional[str]): Name of the Marker stream in XDF.
+                                                Defaults to XDF_READER_DEFAULT_MARKER_STREAM_NAME.
+        """
         self.logger = logger
-        # Store configuration
-        self._eeg_stream_name: str = eeg_stream_name
-        self._fnirs_stream_name: str = fnirs_stream_name
-        self._ecg_stream_name: str = ecg_stream_name
-        self._eda_stream_name: str = eda_stream_name
-        self._marker_stream_name: str = marker_stream_name
-        self.logger.info("XDFReader initialized.")
+
+        # Configure EEG stream name
+        self._eeg_stream_name = XDF_READER_DEFAULT_EEG_STREAM_NAME
+        if eeg_stream_name is not None:
+            if isinstance(eeg_stream_name, str) and eeg_stream_name.strip():
+                self._eeg_stream_name = eeg_stream_name
+            else:
+                self.logger.warning(
+                    f"XDFReader: Invalid value ('{eeg_stream_name}') provided for 'eeg_stream_name'. "
+                    f"Using default: '{XDF_READER_DEFAULT_EEG_STREAM_NAME}'."
+                )
+
+        # Configure fNIRS stream name
+        self._fnirs_stream_name = XDF_READER_DEFAULT_FNIRS_STREAM_NAME
+        if fnirs_stream_name is not None:
+            if isinstance(fnirs_stream_name, str) and fnirs_stream_name.strip():
+                self._fnirs_stream_name = fnirs_stream_name
+            else:
+                self.logger.warning(
+                    f"XDFReader: Invalid value ('{fnirs_stream_name}') provided for 'fnirs_stream_name'. "
+                    f"Using default: '{XDF_READER_DEFAULT_FNIRS_STREAM_NAME}'."
+                )
+
+        # Configure ECG stream name
+        self._ecg_stream_name = XDF_READER_DEFAULT_ECG_STREAM_NAME
+        if ecg_stream_name is not None:
+            if isinstance(ecg_stream_name, str) and ecg_stream_name.strip():
+                self._ecg_stream_name = ecg_stream_name
+            else:
+                self.logger.warning(
+                    f"XDFReader: Invalid value ('{ecg_stream_name}') provided for 'ecg_stream_name'. "
+                    f"Using default: '{XDF_READER_DEFAULT_ECG_STREAM_NAME}'."
+                )
+
+        # Configure EDA stream name
+        self._eda_stream_name = XDF_READER_DEFAULT_EDA_STREAM_NAME
+        if eda_stream_name is not None:
+            if isinstance(eda_stream_name, str) and eda_stream_name.strip():
+                self._eda_stream_name = eda_stream_name
+            else:
+                self.logger.warning(
+                    f"XDFReader: Invalid value ('{eda_stream_name}') provided for 'eda_stream_name'. "
+                    f"Using default: '{XDF_READER_DEFAULT_EDA_STREAM_NAME}'."
+                )
+
+        # Configure Marker stream name
+        self._marker_stream_name = XDF_READER_DEFAULT_MARKER_STREAM_NAME
+        if marker_stream_name is not None:
+            if isinstance(marker_stream_name, str) and marker_stream_name.strip():
+                self._marker_stream_name = marker_stream_name
+            else:
+                self.logger.warning(
+                    f"XDFReader: Invalid value ('{marker_stream_name}') provided for 'marker_stream_name'. "
+                    f"Using default: '{XDF_READER_DEFAULT_MARKER_STREAM_NAME}'."
+                )
+
+        self.logger.info(
+            f"XDFReader initialized. Stream names configured: "
+            f"EEG='{self._eeg_stream_name}', fNIRS='{self._fnirs_stream_name}', "
+            f"ECG='{self._ecg_stream_name}', EDA='{self._eda_stream_name}', "
+            f"Marker='{self._marker_stream_name}'."
+        )
+
     def load_participant_streams(self, participant_id: str, xdf_file_path: str):
         """
         Loads relevant data streams (EEG, ECG, EDA, fNIRS, Markers) from XDF files
@@ -62,7 +140,7 @@ class XDFReader:
                     sfreq = float(stream['info']['nominal_srate'][0])
                     ch_names = [ch['label'][0] for ch in stream['info']['desc'][0]['channels'][0]['channel']]
                     ch_types = ['eeg'] * len(ch_names)
-                    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types)
+                    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types) # type: ignore
                     raw_eeg = mne.io.RawArray(data, info, verbose=False)
 
                     loaded_data['eeg'] = raw_eeg
@@ -145,8 +223,8 @@ class XDFReader:
                     ch_names = [ch['label'][0] for ch in stream['info']['desc'][0]['channels'][0]['channel']]
                     ch_types = ['fnirs_od'] * len(ch_names)
 
-
-                    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types)
+                    # MNE expects ch_types as a list of strings, one for each channel
+                    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types) # type: ignore
                     raw_fnirs_od = mne.io.RawArray(data, info, verbose=False)
                     self.logger.info(f"XDFReader - Loaded fNIRS data with {len(ch_names)} channels at {sfreq} Hz.")
                     processed_stream_names.add(self._fnirs_stream_name)

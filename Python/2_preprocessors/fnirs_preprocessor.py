@@ -1,17 +1,18 @@
 import mne
-import mne_nirs
+import os
 from mne_nirs.signal_enhancement import short_channel_regression
 from mne_nirs.channels import get_long_channels, get_short_channels
-import os
 import numpy as np
+import pandas as pd
+from typing import Union
+
+# Module-level defaults for FNIRSPreprocessor
+DEFAULT_BEER_LAMBERT_REMOVE_OD = True
+DEFAULT_FILTER_H_TRANS_BANDWIDTH: Union[str, float] = 'auto'
+DEFAULT_FILTER_L_TRANS_BANDWIDTH: Union[str, float] = 'auto'
+DEFAULT_FILTER_FIR_DESIGN = 'firwin'
 
 class FNIRSPreprocessor:
-    # Default internal processing parameters
-    DEFAULT_BEER_LAMBERT_REMOVE_OD = True
-    DEFAULT_FILTER_H_TRANS_BANDWIDTH = 'auto'
-    DEFAULT_FILTER_L_TRANS_BANDWIDTH = 'auto'
-    DEFAULT_FILTER_FIR_DESIGN = 'firwin'
-
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("FNIRSPreprocessor initialized.")
@@ -45,15 +46,56 @@ class FNIRSPreprocessor:
             self.logger.error("FNIRSPreprocessor - 'filter_band_config' must be a tuple or list of two floats (low, high). Skipping.")
             return None
 
-        self.logger.info("FNIRSPreprocessor - Starting fNIRS preprocessing.")
+        # Determine final config values, using defaults if not provided or invalid
+        # Note: beer_lambert_ppf_config, short_channel_regression_config, motion_correction_method_config,
+        # and filter_band_config are treated as required/validated by the orchestrator
+        # based on the initial checks, so we don't apply defaults/warnings for them here.
+
+        final_beer_lambert_remove_od = DEFAULT_BEER_LAMBERT_REMOVE_OD
+        # No config parameter for this one in the method signature, so it always uses the default
+
+        final_filter_h_trans_bandwidth = DEFAULT_FILTER_H_TRANS_BANDWIDTH
+        # No config parameter for this one in the method signature, so it always uses the default
+
+        final_filter_l_trans_bandwidth = DEFAULT_FILTER_L_TRANS_BANDWIDTH
+        # No config parameter for this one in the method signature, so it always uses the default
+
+        final_filter_fir_design = DEFAULT_FILTER_FIR_DESIGN
+        # No config parameter for this one in the method signature, so it always uses the default
+
+        # If you wanted to make these configurable via the method signature, you would add parameters like:
+        # beer_lambert_remove_od_config: Optional[bool] = None,
+        # filter_h_trans_bandwidth_config: Optional[Union[str, float]] = None,
+        # filter_l_trans_bandwidth_config: Optional[Union[str, float]] = None,
+        # filter_fir_design_config: Optional[str] = None,
+        # and then add the validation/default logic here for each.
+        # For now, they remain internal defaults.
+
+        self.logger.info(f"FNIRSPreprocessor - Starting fNIRS preprocessing with effective configs: "
+                         f"BeerLambertPPF={beer_lambert_ppf_config}, RemoveOD={final_beer_lambert_remove_od}, "
+                         f"ShortChannelRegression={short_channel_regression_config}, "
+                         f"MotionCorrectionMethod='{motion_correction_method_config}', "
+                         f"FilterBand={filter_band_config}, "
+                         f"FilterHTBW='{final_filter_h_trans_bandwidth}', FilterLTBW='{final_filter_l_trans_bandwidth}', "
+                         f"FilterFIRDesign='{final_filter_fir_design}'.")
+
         try:
             # Ensure data is loaded
             if hasattr(fnirs_raw_od, '_data') and fnirs_raw_od._data is None and fnirs_raw_od.preload is False:
                 fnirs_raw_od.load_data(verbose=False)
+
             self.logger.info(f"FNIRSPreprocessor - Applying Beer-Lambert Law (PPF={beer_lambert_ppf_config}).")
-            raw_haemo = mne_nirs.beer_lambert_law(fnirs_raw_od.copy(), 
-                                                ppf=beer_lambert_ppf_config, 
-                                                remove_od=self.DEFAULT_BEER_LAMBERT_REMOVE_OD)
+            raw_haemo = mne.preprocessing.nirs.optical_density(fnirs_raw_od.copy()).copy().to_concentration(
+                                                ppf=beer_lambert_ppf_config)
+            
+            # Check for widespread NaNs/Infs immediately after Beer-Lambert conversion
+            raw_haemo_data_check = raw_haemo.get_data()
+            if np.all(np.isnan(raw_haemo_data_check)) or np.all(np.isinf(raw_haemo_data_check)):
+                self.logger.error("FNIRSPreprocessor - Data is all NaN/Inf after Beer-Lambert law. Cannot proceed.")
+                return None
+            elif np.any(np.isnan(raw_haemo_data_check)) or np.any(np.isinf(raw_haemo_data_check)):
+                 self.logger.warning("FNIRSPreprocessor - NaN/Inf values detected after Beer-Lambert law. Subsequent cleaning will attempt to address this.")
+            del raw_haemo_data_check # Free memory
             
             if short_channel_regression_config:
                 try:
@@ -73,14 +115,32 @@ class FNIRSPreprocessor:
             if motion_correction_method_config == 'tddr':
                 self.logger.info("FNIRSPreprocessor - Applying TDDR motion artifact correction.")
                 # TDDR might be sensitive to NaNs or Infs if present
-                if np.any(np.isnan(raw_haemo.get_data())) or np.any(np.isinf(raw_haemo.get_data())):
-                    self.logger.warning("FNIRSPreprocessor - NaN or Inf values found in data before TDDR. Attempting to interpolate.")
-                    raw_haemo.interpolate_bads(reset_bads=True, mode='accurate', verbose=False) # General interpolation
-                
-                corrected_haemo = mne_nirs.temporal_derivative_distribution_repair(raw_haemo.copy())
-            # Add other motion correction methods like 'savgol' if needed
+                current_data = raw_haemo.get_data()
+                if np.any(np.isnan(current_data)) or np.any(np.isinf(current_data)):
+                    self.logger.warning("FNIRSPreprocessor - NaN or Inf values found in data before TDDR. Attempting to clean by channel-wise interpolation.")
+                    
+                    # Replace Infs with NaNs to allow pandas interpolation
+                    current_data[np.isinf(current_data)] = np.nan # type: ignore
+                    
+                    # Define a robust interpolation function for apply_function
+                    def interpolate_nan_channel_wise(channel_data):
+                        s = pd.Series(channel_data)
+                        # Interpolate NaNs
+                        s_interpolated = s.interpolate(method='linear', limit_direction='both')
+                        # Fill any remaining NaNs at the very start/end using ffill and bfill
+                        s_filled_ends = s_interpolated.ffill().bfill()
+                        # If channel was all NaNs (or became all NaNs), fill with 0
+                        return s_filled_ends.fillna(0).to_numpy()
+
+ # Apply the interpolation channel by channel
+                    # Create a new Raw object with the cleaned data to avoid in-place modification issues with apply_function
+                    cleaned_data = np.array([interpolate_nan_channel_wise(ch_data) for ch_data in current_data])
+                    raw_haemo = mne.io.RawArray(cleaned_data, raw_haemo.info, first_samp=raw_haemo.first_samp, verbose=False)
+
+                corrected_haemo = mne.preprocessing.nirs.temporal_derivative_distribution_repair(raw_haemo.copy())
+ # Add other motion correction methods like 'savgol' if needed
             # elif motion_correction_method_config == 'savgol':
-            #     self.logger.info("FNIRSPreprocessor - Applying Savitzky-Golay filter for motion artifact correction.")
+            # self.logger.info("FNIRSPreprocessor - Applying Savitzky-Golay filter for motion artifact correction.")
             #     # Example: corrected_haemo = raw_haemo.copy().filter(..., method='savgol', h_freq=None, l_freq=None, **some_savgol_params_config)
             #     corrected_haemo = raw_haemo # Placeholder if savgol not fully implemented here            
             elif motion_correction_method_config and motion_correction_method_config.lower() != 'none':
@@ -91,9 +151,9 @@ class FNIRSPreprocessor:
                 corrected_haemo = raw_haemo # Pass through if no method or 'none'
             self.logger.info(f"FNIRSPreprocessor - Applying band-pass filter ({filter_band_config[0]}-{filter_band_config[1]} Hz).")
             corrected_haemo.filter(l_freq=filter_band_config[0], h_freq=filter_band_config[1],
-                                   h_trans_bandwidth=self.DEFAULT_FILTER_H_TRANS_BANDWIDTH,
-                                   l_trans_bandwidth=self.DEFAULT_FILTER_L_TRANS_BANDWIDTH,
-                                   fir_design=self.DEFAULT_FILTER_FIR_DESIGN, verbose=False)
+                                   h_trans_bandwidth=final_filter_h_trans_bandwidth,
+                                   l_trans_bandwidth=final_filter_l_trans_bandwidth,
+                                   fir_design=final_filter_fir_design, verbose=False)
             
             self.logger.info("FNIRSPreprocessor - fNIRS preprocessing completed.")
             return corrected_haemo
