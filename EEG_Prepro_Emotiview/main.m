@@ -1,4 +1,5 @@
 clear; clc;
+addpath(genpath('classes'));
 config = config();
 [ALLEEG, EEG, CURRENTSET, ALLCOM] = eeglab;
 
