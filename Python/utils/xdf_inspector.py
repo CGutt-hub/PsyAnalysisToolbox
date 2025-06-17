@@ -2,8 +2,9 @@ import pyxdf
 import argparse
 import json # For pretty printing the info dictionary
 import numpy as np # Import numpy to check array type
+from typing import Any, Dict, List # For type hinting
 
-def inspect_xdf(file_path):
+def inspect_xdf(file_path: str) -> None:
     """
     Loads an XDF file and prints detailed information about each stream.
     """
@@ -18,21 +19,44 @@ def inspect_xdf(file_path):
     print("="*50)
 
     for i, stream in enumerate(streams):
-        print(f"\n--- Stream {i+1} ---")
+        print(f"\n--- Stream {i+1} ({stream.get('info', {}).get('name', ['N/A'])[0]}) ---") # Add name to header
         
-        # Print just the stream name
-        info_str = f"Stream Name: {stream['info'].get('name', ['N/A'])[0]}" # Get the first element if 'name' is a list
-        print("Stream Info:")
-        print(info_str)
+        stream_info: Dict[str, Any] = stream.get('info', {})
+        
+        # Print selected fields from stream['info'] for quick overview
+        print("\nKey Stream Info:")
+        print(f"  Name: {stream_info.get('name', ['N/A'])[0]}")
+        print(f"  Type: {stream_info.get('type', ['N/A'])[0]}")
+        print(f"  Channel Count (from info): {stream_info.get('channel_count', ['N/A'])[0]}")
+        print(f"  Nominal Sampling Rate: {stream_info.get('nominal_srate', ['N/A'])[0]}")
+        print(f"  Effective Sampling Rate (approx): {stream_info.get('effective_srate', 'N/A')}")
+        
+        # Attempt to print channel labels if available
+        try:
+            channels_desc = stream_info.get('desc', [{}])[0].get('channels', [{}])[0].get('channel', [])
+            if channels_desc and isinstance(channels_desc, list):
+                channel_labels = [ch.get('label', ['N/A'])[0] for ch in channels_desc if isinstance(ch, dict)]
+                if channel_labels:
+                    print(f"  Channel Labels (from desc): {channel_labels}")
+        except (IndexError, TypeError, AttributeError):
+            print("  Channel Labels (from desc): Not found or could not parse.")
         
         # Check if time_series is a numpy array before accessing shape/ndim
+        print("\nTime Series Data:")
         if isinstance(stream['time_series'], np.ndarray):
-            print(f"\nNumber of channels in time_series: {stream['time_series'].shape[1] if stream['time_series'].ndim > 1 else 1}")
+            print(f"  Shape: {stream['time_series'].shape}")
+            print(f"  Number of channels (from data shape): {stream['time_series'].shape[1] if stream['time_series'].ndim > 1 else 1}")
         else:
-            print("\nTime series data is not a standard NumPy array (likely markers or strings).")
-            print("Number of channels concept may not apply in the same way.")
-        print(f"Number of samples in time_series: {len(stream['time_series'])}")
-        print(f"Effective sampling rate (approx): {stream['info'].get('effective_srate', 'N/A')}")
+            print("  Data is not a standard NumPy array (e.g., markers, strings).")
+        print(f"  Number of samples/events: {len(stream['time_series'])}")
+        
+        # Print the full stream['info'] dictionary for detailed inspection
+        print("\nFull Stream Info Dictionary (info):")
+        try:
+            print(json.dumps(stream_info, indent=4, ensure_ascii=False, default=str)) # Use default=str for non-serializable
+        except Exception as e_json:
+            print(f"  Could not pretty-print full info dict: {e_json}")
+            print(f"  Raw info dict: {stream_info}")
         print("="*50)
 
 if __name__ == "__main__":

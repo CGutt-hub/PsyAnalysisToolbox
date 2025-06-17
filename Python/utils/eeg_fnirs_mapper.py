@@ -30,9 +30,23 @@ class EEGfNIRSMapper:
         self.logger = logger
         self.config = {**DEFAULT_EEG_FNIRS_MAPPER_CONFIG, **config} # Merge provided config with defaults
 
-        self.fnirs_roi_to_eeg_map = self.config.get("fnirs_roi_to_eeg_map")
-        self.default_eeg_channels_for_plv = self.config.get("default_eeg_channels_for_plv")
-        self.strategy = self.config.get("eeg_channel_selection_strategy")
+        # Validate and set fnirs_roi_to_eeg_map
+        fnirs_map_config = self.config.get("fnirs_roi_to_eeg_map")
+        if isinstance(fnirs_map_config, dict) and all(isinstance(k, str) and isinstance(v, list) and all(isinstance(ch, str) for ch in v) for k, v in fnirs_map_config.items()):
+            self.fnirs_roi_to_eeg_map = fnirs_map_config
+        else:
+            self.logger.warning(f"EEGfNIRSMapper: 'fnirs_roi_to_eeg_map' is not a valid Dict[str, List[str]]. Using empty map. Config was: {fnirs_map_config}")
+            self.fnirs_roi_to_eeg_map = {}
+
+        # Validate and set default_eeg_channels_for_plv
+        default_channels_config = self.config.get("default_eeg_channels_for_plv")
+        if isinstance(default_channels_config, list) and all(isinstance(ch, str) for ch in default_channels_config):
+            self.default_eeg_channels_for_plv = default_channels_config
+        else:
+            self.logger.warning(f"EEGfNIRSMapper: 'default_eeg_channels_for_plv' is not a valid List[str]. Using empty list. Config was: {default_channels_config}")
+            self.default_eeg_channels_for_plv = []
+
+        self.strategy = str(self.config.get("eeg_channel_selection_strategy", "mapping")) # Ensure strategy is a string
 
         self.logger.info(f"EEGfNIRSMapper initialized with strategy: '{self.strategy}'. "
                          f"Default PLV channels configured: {bool(self.default_eeg_channels_for_plv)}. "
@@ -63,6 +77,14 @@ class EEGfNIRSMapper:
         Returns:
             List[str]: List of EEG channel names corresponding to the active fNIRS ROIs.
         """
+        if not isinstance(eeg_info, mne.Info):
+            self.logger.error("EEGfNIRSMapper: eeg_info must be an MNE Info object. Cannot select channels.")
+            return []
+        if not isinstance(fnirs_active_rois, list) or not all(isinstance(roi, str) for roi in fnirs_active_rois):
+            self.logger.error("EEGfNIRSMapper: fnirs_active_rois must be a list of strings. Using empty list for active ROIs.")
+            fnirs_active_rois = [] # Treat as no active ROIs
+
+
         final_selected_channels: List[str] = []
         eeg_channel_names_set = set(eeg_info['ch_names'])
     

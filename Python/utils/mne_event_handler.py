@@ -90,7 +90,7 @@ class MNEEventHandler:
         if 'trial_identifier_eprime' not in events_df.columns:
             self.logger.warning("Events DataFrame missing 'trial_identifier_eprime' column. Numeric trial ID will be 0.")
             events_df['trial_identifier_eprime_numeric'] = 0
-        else:
+        else:        
             # Create a mapping for unique trial identifiers
             # Start numeric IDs high to avoid conflict with condition IDs (typically 1-999)
             unique_trial_ids_eprime = events_df['trial_identifier_eprime'].dropna().unique()
@@ -106,7 +106,9 @@ class MNEEventHandler:
         
         # Select only rows where condition_id is > 0 (i.e., was successfully mapped)
         # and select the required columns in the correct MNE order
-        mne_events_sub_df = events_df[events_df['condition_id'] > 0][['onset_sample', 'condition_id', 'trial_identifier_eprime_numeric']].copy()
+        # MNE events array structure: [sample, previous_event_id, event_id]
+        # Here, 'condition_id' serves as the MNE event_id.
+        mne_events_sub_df = events_df[events_df['condition_id'] > 0][['onset_sample', 'condition_id']].copy()
         
         if mne_events_sub_df.empty:
              self.logger.warning("After mapping conditions, no events remained with a valid condition ID (> 0). Returning empty events array.")
@@ -114,7 +116,6 @@ class MNEEventHandler:
 
         # Insert the 'previous event ID' column (always 0 for standard MNE events)
         mne_events_sub_df.insert(1, 'prev_event_id', 0) 
-        
         # Convert to numpy array
         mne_events_array = mne_events_sub_df.values.astype(int)
         

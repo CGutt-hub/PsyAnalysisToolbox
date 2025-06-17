@@ -23,11 +23,22 @@ class ParallelTaskRunner:
                            It can return any result. If the task_function handles its
                            own errors, it's recommended to return a dictionary 
                            with a 'status' key indicating success or specific error.
-            task_configs (List[Any]): A list of configuration objects/dictionaries, one for each task.
+            task_configs (List[Any]): A list of configuration objects/dictionaries, one for each task. 
+                                      Can be an empty list.
             main_logger_name (str): Name of the main logger to use for the runner's own logging.
             max_workers (int, optional): Maximum number of worker threads. 
                                          Defaults to PARALLEL_TASK_RUNNER_DEFAULT_MAX_WORKERS.
         """
+        if not callable(task_function):
+            raise TypeError("task_function must be a callable function.")
+        if not isinstance(task_configs, list):
+            # Allow empty list, but it must be a list.
+            raise TypeError("task_configs must be a list.")
+        if not isinstance(main_logger_name, str) or not main_logger_name.strip():
+            # Cannot log an error here as logger is not yet initialized.
+            # Raising an error is appropriate for critical misconfiguration.
+            raise ValueError("main_logger_name must be a non-empty string.")
+
         self.task_function = task_function
         self.task_configs = task_configs
         self.logger = logging.getLogger(main_logger_name) # Initialize logger once, early
