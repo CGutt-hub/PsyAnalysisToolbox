@@ -8,6 +8,7 @@ class EEGPreprocessor:
     DEFAULT_EEG_REFERENCE_PROJECTION = True
     DEFAULT_FILTER_FIR_DESIGN = 'firwin'
     DEFAULT_ICA_MAX_ITER: Union[str, int] = 'auto' # MNE default
+    DEFAULT_RESAMPLE_SFREQ: Optional[float] = None # No resampling by default, or e.g., 250.0
     DEFAULT_ICA_LABELING_METHOD = 'iclabel' # Method for mne_icalabel
 
     def __init__(self, logger):
@@ -27,6 +28,7 @@ class EEGPreprocessor:
                   eeg_reference_projection_config: Optional[bool] = None,
                   filter_fir_design_config: Optional[str] = None,
                   ica_max_iter_config: Optional[Union[int, str]] = None,
+                  resample_sfreq_config: Optional[float] = None, # New parameter for resampling
                   ica_labeling_method_config: Optional[str] = None
                   ) -> Optional[mne.io.Raw]:
         """
@@ -42,6 +44,7 @@ class EEGPreprocessor:
             eeg_reference_projection_config (Optional[bool]): Whether to use projection for reference. Defaults to DEFAULT_EEG_REFERENCE_PROJECTION.
             filter_fir_design_config (Optional[str]): FIR filter design. Defaults to DEFAULT_FILTER_FIR_DESIGN.
             ica_max_iter_config (Optional[Union[int, str]]): Max iterations for ICA. Defaults to DEFAULT_ICA_MAX_ITER.
+            resample_sfreq_config (Optional[float]): Target sampling frequency for resampling before ICA. Defaults to None (no resampling).
             ica_labeling_method_config (Optional[str]): Method for mne_icalabel. Defaults to DEFAULT_ICA_LABELING_METHOD.
         Returns:
             mne.io.Raw: Preprocessed EEG data, or None if input is None or error.
@@ -121,10 +124,18 @@ class EEGPreprocessor:
             else:
                 self.logger.warning(f"EEGPreprocessor: Invalid 'ica_labeling_method_config' ('{ica_labeling_method_config}'). Using default: '{self.DEFAULT_ICA_LABELING_METHOD}'.")
 
+        final_resample_sfreq = self.DEFAULT_RESAMPLE_SFREQ
+        if resample_sfreq_config is not None:
+            if isinstance(resample_sfreq_config, (float, int)) and resample_sfreq_config > 0:
+                final_resample_sfreq = float(resample_sfreq_config)
+            else:
+                self.logger.warning(f"EEGPreprocessor: Invalid 'resample_sfreq_config' ('{resample_sfreq_config}'). Using default: '{self.DEFAULT_RESAMPLE_SFREQ}'.")
+
 
         self.logger.info(f"EEGPreprocessor - Starting EEG preprocessing with effective configs: "
                          f"FilterBand={eeg_filter_band_config}, FIRDesign='{final_fir_design}', "
                          f"Reference='{final_eeg_ref}' (Projection={final_eeg_ref_proj}), "
+                         f"ResampleSFreq={final_resample_sfreq}, " # Log new parameter
                          f"ICA Components={ica_n_components_config}, ICA MaxIter='{final_ica_max_iter}', "
                          f"ICA LabelMethod='{final_ica_label_method}', ICA AcceptLabels={ica_accept_labels_config}, "
                          f"ICA RejectThreshold={ica_reject_threshold_config}.")
@@ -133,6 +144,12 @@ class EEGPreprocessor:
             # Ensure data is loaded if it's not already
             if hasattr(raw_eeg, '_data') and raw_eeg._data is None and raw_eeg.preload is False:
                  raw_eeg.load_data(verbose=False)
+            
+            # Resample if configured
+            if final_resample_sfreq is not None and final_resample_sfreq < raw_eeg.info['sfreq']:
+                self.logger.info(f"EEGPreprocessor - Resampling EEG from {raw_eeg.info['sfreq']} Hz to {final_resample_sfreq} Hz.")
+                raw_eeg.resample(sfreq=final_resample_sfreq, verbose=False)
+                self.logger.info(f"EEGPreprocessor - Resampling completed. New SFreq: {raw_eeg.info['sfreq']} Hz.")
 
             self.logger.info(f"EEGPreprocessor - Filtering EEG: {eeg_filter_band_config[0]}-{eeg_filter_band_config[1]} Hz.")
             raw_eeg.filter(l_freq=eeg_filter_band_config[0], h_freq=eeg_filter_band_config[1], 

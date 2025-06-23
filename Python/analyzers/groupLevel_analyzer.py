@@ -18,7 +18,7 @@ class GroupLevelAnalyzing:
     def analyze_data(self,
                      data_df: pd.DataFrame,
                      analysis_config: Dict[str, Any],
-                     task_name: str = DEFAULT_ANALYSIS_TASK_NAME) -> Optional[Union[pd.DataFrame, Dict[str, Any]]]:
+                     task_name: str = DEFAULT_ANALYSIS_TASK_NAME) -> Optional[pd.DataFrame]:
         """
         Executes a statistical analysis step based on the provided configuration.
 
@@ -29,7 +29,7 @@ class GroupLevelAnalyzing:
             task_name: Name of the task for logging.
 
         Returns:
-            The results of the analysis (e.g., DataFrame or Dict), or None on failure.
+            The results of the analysis (a pandas DataFrame), or None on failure.
         """
         if data_df is None:
             self.logger.warning(f"Task '{task_name}': Input data_df is None. Skipping analysis.")
