@@ -1,5 +1,5 @@
 import logging
-import pandas as pd # For pd.DataFrame type hint
+import pandas as pd
 import numpy as np # For np.ndarray type hint
 from typing import Dict, Tuple, Optional, Any
 
@@ -8,6 +8,7 @@ from typing import Dict, Tuple, Optional, Any
 # - conditions_to_map: List of string condition names to map to integer IDs.
 DEFAULT_MNE_EVENT_HANDLER_CONFIG = {
     "conditions_to_map": [],
+    "event_id_map": {} # Mapping from numeric marker to condition name
 }
 
 class MNEEventHandler:
@@ -21,14 +22,19 @@ class MNEEventHandler:
 
         Args:
             config (Dict[str, Any]): Configuration dictionary. Expected keys:
-                - 'conditions_to_map' (List[str]): List of string condition names to map to integer IDs.
+                - 'conditions_to_map' (List[str]): Ordered list of condition names (e.g., ['Positive', 'Negative', 'Neutral']).
+                - 'event_id_map' (Dict[int, str]): Mapping from numeric marker values to condition names.
             logger (logging.Logger): Logger instance.
         """
         self.logger = logger
         self.config = {**DEFAULT_MNE_EVENT_HANDLER_CONFIG, **config} # Merge provided config with defaults
 
         self.conditions_to_map = self.config.get("conditions_to_map", [])
-        if not self.conditions_to_map:
+        self.numeric_marker_to_name_map = self.config.get("event_id_map", {})
+
+        if not self.numeric_marker_to_name_map:
+            self.logger.warning("MNEEventHandler initialized with an empty 'event_id_map'. It can only map string conditions.")
+        elif not self.conditions_to_map:
              self.logger.warning("MNEEventHandler initialized with an empty 'conditions_to_map'. No conditions will be mapped.")
 
         self.logger.info(f"MNEEventHandler initialized. Will map {len(self.conditions_to_map)} conditions.")
@@ -38,12 +44,12 @@ class MNEEventHandler:
                       sfreq: float) -> Tuple[Optional[np.ndarray], Dict[str, int], Dict[str, int]]:
         """
         Creates MNE-compatible event arrays and mappings from an events DataFrame.
-        Uses the 'conditions_to_map' configured during initialization.
+        Uses 'event_id_map' to map numeric markers to condition names, and 'conditions_to_map'
+        to create the final MNE event IDs.
 
         Args:
             events_df (pd.DataFrame): DataFrame with event information.
-                                    Must contain 'onset_time_sec' (or 'onset_sample'),
-                                    'condition', and optionally 'trial_identifier_eprime'.
+                                    Must contain 'onset_time_sec' and a 'condition' column with marker values.
                                     'onset_time_sec' requires sfreq for conversion.
                                     'onset_sample' is preferred if available and sfreq is valid.
             sfreq (float): Sampling frequency to convert 'onset_time_sec' to 'onset_sample' if needed.
@@ -76,14 +82,28 @@ class MNEEventHandler:
                 self.logger.error("Cannot determine 'onset_sample' for events. DataFrame is missing both 'onset_sample' and 'onset_time_sec' columns.")
                 return None, {}, {}
 
-        # Map conditions to integer IDs
-        event_id_map = {name: i + 1 for i, name in enumerate(self.conditions_to_map)}
-        if not self.conditions_to_map: # Already warned in __init__, but good to be explicit here too
-            self.logger.warning("No conditions were configured for mapping in 'conditions_to_map'. Event IDs will likely be 0.")
-        
         if 'condition' not in events_df.columns:
             self.logger.error("Events DataFrame missing 'condition' column for MNE event creation.")
             return None, {}, {}
+
+        # 1. Create the final MNE event_id dictionary (e.g., {'Positive': 1, 'Negative': 2})
+        # This uses the order from 'conditions_to_map' for consistency.
+        mne_event_id_map = {name: i + 1 for i, name in enumerate(self.conditions_to_map)}
+        if not mne_event_id_map:
+            self.logger.warning("No conditions in 'conditions_to_map'. The returned event_id_map will be empty.")
+
+        # 2. Map the numeric markers in the 'condition' column to their string names
+        # The 'condition' column from XDF is often a list of strings, so handle that.
+        def get_first_element(x):
+            return x[0] if isinstance(x, list) and x else x
+
+        # Convert numeric markers (which might be strings) to condition names
+        events_df['condition_name'] = pd.to_numeric(events_df['condition'].apply(get_first_element), errors='coerce')
+        events_df = events_df.dropna(subset=['condition_name']) # Drop rows where marker wasn't numeric
+        events_df['condition_name'] = events_df['condition_name'].astype(int).map(self.numeric_marker_to_name_map)
+
+        # 3. Map the condition names to the final MNE integer IDs
+        events_df['condition_id'] = events_df['condition_name'].map(mne_event_id_map).fillna(0).astype(int)
 
         # Map trial identifiers to integer IDs (optional)
         trial_id_eprime_map = {}
@@ -101,18 +121,14 @@ class MNEEventHandler:
             else:
                 self.logger.info("No unique trial identifiers found to map in 'trial_identifier_eprime' column or column was all NaNs.")
 
-        # Apply condition mapping and filter for conditions that were mapped
-        events_df['condition_id'] = events_df['condition'].map(event_id_map).fillna(0).astype(int)
-        
         # Select only rows where condition_id is > 0 (i.e., was successfully mapped)
         # and select the required columns in the correct MNE order
         # MNE events array structure: [sample, previous_event_id, event_id]
         # Here, 'condition_id' serves as the MNE event_id.
         mne_events_sub_df = events_df[events_df['condition_id'] > 0][['onset_sample', 'condition_id']].copy()
-        
         if mne_events_sub_df.empty:
              self.logger.warning("After mapping conditions, no events remained with a valid condition ID (> 0). Returning empty events array.")
-             return np.array([]).reshape(0, 3), event_id_map, trial_id_eprime_map
+             return np.array([]).reshape(0, 3), mne_event_id_map, trial_id_eprime_map
 
         # Insert the 'previous event ID' column (always 0 for standard MNE events)
         mne_events_sub_df.insert(1, 'prev_event_id', 0) 
@@ -120,4 +136,4 @@ class MNEEventHandler:
         mne_events_array = mne_events_sub_df.values.astype(int)
         
         self.logger.info(f"Successfully created MNE events array with {len(mne_events_array)} events.")
-        return mne_events_array, event_id_map, trial_id_eprime_map
+        return mne_events_array, mne_event_id_map, trial_id_eprime_map

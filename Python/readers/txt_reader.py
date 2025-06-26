@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 import os
 
 # Module-level defaults for TXTReader
@@ -15,6 +15,7 @@ class TXTReader:
 
     def load_data(self,
                   file_path: str,
+                  reader_type: str = 'tabular', # 'tabular' for CSV/Excel, 'eprime' for E-Prime logs
                   file_type: Optional[str] = None,
                   sheet_name: Optional[Union[str, int]] = None, # For Excel files
                   participant_id_col: Optional[str] = None,
@@ -22,12 +23,13 @@ class TXTReader:
                   ) -> Optional[pd.DataFrame]:
         """
         Loads tabular data (e.g., questionnaire responses) from a specified file (CSV or Excel).
-        While named for questionnaires, this loader is suitable for any data in these
-        supported tabular formats. For .txt files that are structured like CSVs (e.g., delimiter-separated),
-        use file_type='csv' and pass the appropriate delimiter via **kwargs (e.g., delimiter='\\t').
+        Can also parse E-Prime log files if reader_type is 'eprime'.
 
         Args:
             file_path (str): The full path to the questionnaire data file.
+            reader_type (str): The type of reader logic to use. Can be 'tabular' (default)
+                               for standard CSV/Excel-like files, or 'eprime' for
+                               structured E-Prime log files.
             file_type (Optional[str]): The type of the file ('csv' or 'excel').
                                        If None, defaults to TXTReader.DEFAULT_FILE_TYPE.
                                        For .txt files with a clear delimiter, use 'csv' and specify delimiter in kwargs.
@@ -42,6 +44,10 @@ class TXTReader:
             Optional[pd.DataFrame]: A pandas DataFrame containing the questionnaire data,
                                     or None if loading fails.
         """
+        if reader_type.lower() == 'eprime':
+            # Use the specialized E-Prime parser
+            return self._parse_eprime_log(file_path)
+
         if not os.path.exists(file_path):
             self.logger.error(f"TXTReader - File not found: {file_path}")
             return None
@@ -111,3 +117,114 @@ class TXTReader:
         except Exception as e:
             self.logger.error(f"TXTReader - Error loading data from {file_path}: {e}", exc_info=True)
             return None
+
+    def _parse_eprime_log(self, file_path: str) -> Optional[pd.DataFrame]:
+        """
+        Internal method to parse E-Prime .txt log files.
+        Returns a long-format DataFrame.
+        """
+        self.logger.info(f"TXTReader - Parsing as E-Prime log file: {file_path}")
+        
+        header_data: Dict[str, str] = {}
+        parsed_responses: List[Dict[str, Any]] = []
+        
+        current_log_frame_lines: List[str] = []
+        in_header = False
+        in_log_frame = False
+        
+        participant_id = None
+
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line_stripped = line.strip()
+
+                    if line_stripped == '*** Header Start ***':
+                        in_header = True
+                        continue
+                    elif line_stripped == '*** Header End ***':
+                        in_header = False
+                        participant_id = header_data.get('Subject')
+                        if not participant_id:
+                            self.logger.warning(f"Participant ID (Subject) not found in header of {file_path}. Cannot process questionnaires.")
+                            return pd.DataFrame()
+                        continue
+                    elif line_stripped.startswith('*** LogFrame Start ***'):
+                        in_log_frame = True
+                        current_log_frame_lines = []
+                        continue
+                    elif line_stripped.startswith('*** LogFrame End ***'):
+                        in_log_frame = False
+                        if current_log_frame_lines:
+                            self._process_log_frame(current_log_frame_lines, str(participant_id), parsed_responses)
+                        current_log_frame_lines = []
+                        continue
+
+                    if in_header:
+                        if ':' in line_stripped:
+                            key, value = line_stripped.split(':', 1)
+                            header_data[key.strip()] = value.strip()
+                    elif in_log_frame:
+                        current_log_frame_lines.append(line_stripped)
+            
+            if not parsed_responses:
+                self.logger.warning(f"No questionnaire responses extracted from {file_path}.")
+                return pd.DataFrame()
+
+            df = pd.DataFrame(parsed_responses)
+            self.logger.info(f"Successfully extracted {len(df)} questionnaire responses from {file_path}.")
+            return df
+        except Exception as e:
+            self.logger.error(f"TXTReader - Error parsing E-Prime log file {file_path}: {e}", exc_info=True)
+            return None
+
+    def _process_log_frame(self, lines: List[str], participant_id: str, parsed_responses: List[Dict[str, Any]]):
+        """
+        Processes a single LogFrame's lines to extract questionnaire data.
+        """
+        log_frame_dict: Dict[str, str] = {k.strip(): v.strip() for k, v in (line.split(':', 1) for line in lines if ':' in line)}
+        
+        procedure = log_frame_dict.get('Procedure')
+        
+        # Mapping of procedure names to their respective item/response keys
+        proc_map = {
+            'panasProc': ('panasList', 'panas', 'panas.RESP', 'PANAS'),
+            'bisBasProc': ('bisBasList', 'bis', 'bisBas.RESP', 'BISBAS'),
+            'ea11Proc': ('ea11List', 'adjective', 'ea11.RESP', 'EA11'),
+            'be7Proc': ('be7List', 'emotion', 'be7.RESP', 'BE7')
+        }
+
+        if procedure in proc_map:
+            item_id_key, item_text_key, response_key, q_type = proc_map[procedure]
+            item_id = log_frame_dict.get(item_id_key)
+            item_text = log_frame_dict.get(item_text_key)
+            response_value = log_frame_dict.get(response_key)
+            if item_id and response_value:
+                try:
+                    parsed_responses.append({
+                        'participant_id': participant_id,
+                        'questionnaire_type': q_type,
+                        'item_id': item_id,
+                        'item_text': item_text,
+                        'response_value': int(response_value)
+                    })
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Could not convert response '{response_value}' to int for item '{item_id}' in {procedure}.")
+
+        elif procedure == 'samProc':
+            sam_img = log_frame_dict.get('samBackgroundImg')
+            response_value = log_frame_dict.get('SAM.Choice1.Value')
+            if sam_img and response_value:
+                item_id = None
+                if 'samArousal.png' in sam_img: item_id = 'SAM_Arousal'
+                elif 'samValence.png' in sam_img: item_id = 'SAM_Valence'
+                
+                if item_id:
+                    try:
+                        parsed_responses.append({
+                            'participant_id': participant_id, 'questionnaire_type': 'SAM',
+                            'item_id': item_id, 'item_text': f'{item_id} Rating',
+                            'response_value': int(response_value)
+                        })
+                    except (ValueError, TypeError):
+                        self.logger.warning(f"Could not convert SAM response '{response_value}' to int for item '{item_id}'.")

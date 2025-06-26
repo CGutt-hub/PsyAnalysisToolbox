@@ -1,14 +1,21 @@
 import pandas as pd
 from typing import Dict, Optional, Any
+import numpy as np
 
 class QuestionnairePreprocessor:
     # Default parameters
     DEFAULT_OUTPUT_PID_COL_NAME = 'participant_id'
 
     # Explicit names for expected configuration keys
-    CONFIG_KEY_PID_ORIGINAL = 'participant_id_column_original'
+    CONFIG_KEY_PID_ORIGINAL = 'participant_id_column_original' # For wide format
     CONFIG_KEY_ITEM_MAP = 'item_column_map'
-    CONFIG_KEY_OUTPUT_PID_NAME = 'output_participant_id_col_name' # Corresponds to DEFAULT_OUTPUT_PID_COL_NAME
+    CONFIG_KEY_OUTPUT_PID_NAME = 'output_participant_id_col_name'
+
+    # New config keys for handling different input formats
+    CONFIG_KEY_INPUT_FORMAT = 'input_format' # 'wide' or 'long'
+    CONFIG_KEY_INPUT_PID_COL = 'input_participant_id_col' # For long format
+    CONFIG_KEY_INPUT_ITEM_ID_COL = 'input_item_id_col' # For long format
+    CONFIG_KEY_INPUT_RESPONSE_VALUE_COL = 'input_response_value_col' # For long format
 
     def __init__(self, logger):
         self.logger = logger
