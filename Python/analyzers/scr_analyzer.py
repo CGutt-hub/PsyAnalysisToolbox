@@ -38,6 +38,8 @@ class SCRAnalyzer:
                               and values are the calculated feature values. Returns an empty dict on failure.
         """
 
+        calculated_metrics: Dict[str, float] = {}
+
         if raw_eeg_with_events is None or raw_eeg_with_events.info['sfreq'] is None:
             self.logger.warning("SCRAnalyzer - No EEG data with events or sampling frequency provided. Skipping EDA feature extraction.")
             return calculated_metrics
@@ -46,14 +48,12 @@ class SCRAnalyzer:
             return calculated_metrics
         if scr_features_df is None:
             self.logger.info("SCRAnalyzer - SCR features DataFrame not provided. SCR count will not be calculated.")
-            return calculated_metrics
         if stimulus_duration_seconds is None or stimulus_duration_seconds <= 0:
             self.logger.warning("SCRAnalyzer - Invalid stimulus_duration_seconds provided. Skipping.")
             return calculated_metrics
         if eda_original_sfreq <= 0:
             self.logger.warning("SCRAnalyzer - Invalid eda_original_sfreq provided. Skipping.")
             return calculated_metrics
-        calculated_metrics: Dict[str, float] = {}
 
         self.logger.info("SCRAnalyzer - Calculating EDA features per condition.")
         try:
