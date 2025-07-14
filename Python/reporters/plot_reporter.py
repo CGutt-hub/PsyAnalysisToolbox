@@ -128,13 +128,19 @@ class PlotReporter:
         
         return data_val
 
-    def _save_plot(self, fig: Figure, participant_id_or_group: str, plot_name: str, plot_category_subdir: str):
+    def _save_plot(self, fig: Figure, participant_id_or_group: str, plot_name: str, plot_category_subdir: str, overwrite: bool = True):
         """Helper function to save matplotlib figures."""
         # Create a directory for the participant/group, then the plot category subdir
         plot_dir = os.path.join(self.output_dir_base, str(participant_id_or_group), plot_category_subdir)
         
         os.makedirs(plot_dir, exist_ok=True)
         plot_path = os.path.join(plot_dir, f"{plot_name}.{self.reporting_figure_format}") # Use instance variable
+
+        if not overwrite and os.path.exists(plot_path):
+            self.logger.info(f"Plot '{plot_path}' already exists and overwrite is False. Skipping save.")
+            plt.close(fig)
+            return None
+
         try:
             fig.savefig(plot_path, dpi=self.reporting_dpi) # Use instance variable # type: ignore
             plt.close(fig) # type: ignore
@@ -145,10 +151,37 @@ class PlotReporter:
             plt.close(fig) 
             return None
 
+    def _draw_significance_brackets(self, ax: plt.Axes, brackets_config: List[Dict[str, Any]]):
+        """
+        Draws significance brackets and text on a plot axis based on a configuration list.
+
+        Args:
+            ax (plt.Axes): The matplotlib axes object to draw on.
+            brackets_config (List[Dict[str, Any]]): A list of configurations for each bracket.
+                Each dict should contain:
+                - 'x1', 'x2' (float): The x-coordinates (categorical indices) for the comparison.
+                - 'y_start' (float): The y-axis value where the bracket should start.
+                - 'text' (str): The significance text (e.g., '*', '**', 'n.s.').
+                - 'height' (float, optional): The height of the bracket's vertical lines.
+                - 'fontsize', 'color' (optional): Formatting for the text.
+        """
+        if not brackets_config: return
+
+        for config in brackets_config:
+            x1, x2, y_start = config.get('x1'), config.get('x2'), config.get('y_start')
+            if None in [x1, x2, y_start]:
+                self.logger.warning("Skipping significance bracket due to missing 'x1', 'x2', or 'y_start' in config.")
+                continue
+            
+            height, text, color, fontsize = config.get('height', y_start * 0.05), config.get('text', '*'), config.get('color', 'k'), config.get('fontsize', 10)
+            ax.plot([x1, x1, x2, x2], [y_start, y_start + height, y_start + height, y_start], lw=1.5, c=color)
+            ax.text((x1 + x2) * 0.5, y_start + height, text, ha='center', va='bottom', color=color, fontsize=fontsize)
+
     def generate_plot(self, 
                       participant_id_or_group: str, 
                       plot_config: Dict[str, Any], 
-                      data_payload: Union[pd.DataFrame, Dict[str, Any], None]):
+                      data_payload: Union[pd.DataFrame, Dict[str, Any], None],
+                      overwrite: bool = True):
         """
         Generates and saves a plot based on the provided configuration and data.
         """
@@ -212,7 +245,7 @@ class PlotReporter:
             ax_placeholder.set_title(placeholder_title)
             ax_placeholder.text(0.5, 0.5, f"Plot Generation Error:\nMissing Required Data\n({', '.join(missing_required_args)})", ha='center', va='center', fontsize=9, wrap=True)
             placeholder_fig.tight_layout()
-            self._save_plot(placeholder_fig, participant_id_or_group, f"{plot_type}_{participant_id_or_group}_missing_data".replace(" ", "_").lower(), plot_category_subdir)
+            self._save_plot(placeholder_fig, participant_id_or_group, f"{plot_type}_{participant_id_or_group}_missing_data".replace(" ", "_").lower(), plot_category_subdir, overwrite=True) # Always overwrite placeholders
             return
 
         # Format title and plot name
@@ -238,7 +271,7 @@ class PlotReporter:
             self.logger.info(f"Generating plot '{final_plot_name}' of type '{plot_type}' for '{participant_id_or_group}'.")
             fig = generator_func(participant_id_or_group=participant_id_or_group, title=final_title, **call_args, **plot_params)
             if fig and isinstance(fig, Figure): # Ensure a matplotlib Figure is returned
-                self._save_plot(fig, participant_id_or_group, final_plot_name, plot_category_subdir)
+                self._save_plot(fig, participant_id_or_group, final_plot_name, plot_category_subdir, overwrite=overwrite)
             else:
                 self.logger.warning(f"Plot generator for '{plot_type}' returned no figure for '{participant_id_or_group}'. Plot not saved.")
         except Exception as e:
@@ -314,12 +347,27 @@ class PlotReporter:
                 fig = g.figure # Use .figure instead of .fig
                 fig.suptitle(title, y=plot_params.get('suptitle_y', 1.03))
 
+                # Handle custom annotations at the figure level
+                annotations = plot_params.get("annotations", [])
+                has_annotations = isinstance(annotations, list) and len(annotations) > 0
+                if has_annotations:
+                    for ann_config in annotations:
+                        if isinstance(ann_config, dict) and "text" in ann_config:
+                            # For FacetGrid, text is added to the figure, not a specific axis
+                            fig.text(ann_config.get('x', 0.98), ann_config.get('y', 0.5),
+                                     ann_config["text"],
+                                     transform=fig.transFigure, # Use figure-level coordinates
+                                     fontsize=ann_config.get('fontsize', 9),
+                                     verticalalignment=ann_config.get('va', 'center'),
+                                     horizontalalignment=ann_config.get('ha', 'left'),
+                                     bbox=ann_config.get('bbox'))
+
                 if fig and hasattr(fig, 'axes'): # Ensure a figure object was created and has axes
                     for ax_g in fig.axes: # Rotate x-axis labels for all subplots
                         ax_g.tick_params(axis='x', 
                                          rotation=plot_params.get('xticks_rotation', self.DEFAULT_XTICKS_ROTATION))
                     # Adjust layout to prevent suptitle overlap if it exists, rect expects a tuple
-                    fig.tight_layout(rect=(0, 0, 1, 0.96) if fig.texts else None) 
+                    fig.tight_layout(rect=(0, 0, 0.85, 0.96) if has_annotations else (0, 0, 1, 0.96)) 
 
             except Exception as e:
                 self.logger.warning(f"Could not generate faceted bar plot for {participant_id_or_group} due to: {e}. Plotting placeholder.", exc_info=True)
@@ -450,6 +498,11 @@ class PlotReporter:
                 ax.set_ylabel(plot_params.get('y_axis_label', f"Mean {y_col}"), fontsize=12)
                 ax.set_xlabel(plot_params.get('x_axis_label', x_col.replace('_', ' ').capitalize()), fontsize=12)
                 ax.set_title(title, fontsize=14)
+
+                # Handle significance brackets
+                significance_brackets = plot_params.get("significance_brackets", [])
+                if significance_brackets:
+                    self._draw_significance_brackets(ax, significance_brackets)
 
                 # Handle custom annotations
                 annotations = plot_params.get("annotations", [])
@@ -645,6 +698,11 @@ class PlotReporter:
                             palette=plot_params.get('palette', self.DEFAULT_PALETTE),
                             ax=ax)
                 ax.set_title(title)
+
+                # Handle significance brackets
+                significance_brackets = plot_params.get("significance_brackets", [])
+                if significance_brackets:
+                    self._draw_significance_brackets(ax, significance_brackets)
                 ax.set_xlabel(plot_params.get('x_axis_label', x_col.replace('_',' ').title()))
                 ax.set_ylabel(plot_params.get('y_axis_label', y_col.replace('_',' ').title()))
                 plt.xticks(rotation=plot_params.get('xticks_rotation', self.DEFAULT_XTICKS_ROTATION if plot_params.get('orient', 'v') == 'v' else 0), 
