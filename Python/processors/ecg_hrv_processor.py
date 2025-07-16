@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
-from typing import Tuple, Optional
+from typing import Tuple, Optional, cast
 
 class ECGHRVProcessor:
     # Default parameters for HRV processing
@@ -19,16 +19,16 @@ class ECGHRVProcessor:
                               output_dir: str,
                               target_sfreq_continuous_hrv: float = DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV
                               ) -> Tuple[Optional[str], Optional[np.ndarray],
-                                         Optional[np.ndarray], Optional[np.ndarray], Optional[str]]:
+                              Optional[np.ndarray], Optional[np.ndarray], Optional[str]]:
         """
-        Processes R-peak data to calculate NN-intervals, overall RMSSD, and a continuous HRV signal.
+       Processes R-peak data to calculate NN-intervals, overall RMSSD, and a continuous HRV signal.
 
-        Args:
-            rpeaks_samples (np.ndarray): Array of R-peak sample indices.
-            original_sfreq (float): Sampling frequency of the signal from which R-peaks were derived.
-            participant_id (str): Participant ID for naming output files.
-            output_dir (str): Directory to save processed files (NN-intervals, continuous HRV).
-            target_sfreq_continuous_hrv (float): Target sfreq for continuous HRV. Defaults to ECGHRVProcessor.DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV.
+       Args:
+           rpeaks_samples (np.ndarray): Array of R-peak sample indices.
+           original_sfreq (float): Sampling frequency of the signal from which R-peaks were derived.
+           participant_id (str): Participant ID for naming output files.
+           output_dir (str): Directory to save processed files (NN-intervals, continuous HRV).
+           target_sfreq_continuous_hrv (float): Target sfreq for continuous HRV. Defaults to ECGHRVProcessor.DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV.
 
         Returns:
             Tuple containing:
@@ -36,17 +36,17 @@ class ECGHRVProcessor:
                 - nn_intervals_ms (Optional[np.ndarray]): Array of NN-intervals in milliseconds.
                 - continuous_hrv_signal (Optional[np.ndarray]): The continuous HRV signal (interpolated NNIs in ms).
                 - continuous_hrv_time_vector (Optional[np.ndarray]): Time vector for the continuous HRV signal.
-                - continuous_hrv_signal_path (Optional[str]): Path to the saved continuous HRV signal CSV file.
+                              continuous_hrv_signal_path (Optional[str]): Path to the saved continuous HRV signal CSV file.
         """
         if rpeaks_samples is None or len(rpeaks_samples) < 2:
             self.logger.warning(f"ECGHRVProcessor - P:{participant_id}: Not enough R-peaks ({len(rpeaks_samples) if rpeaks_samples is not None else 0}) provided. Skipping HRV processing.")
             return None, None, None, None, None
         if original_sfreq <= 0:
             self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Invalid original_sfreq ({original_sfreq}). Skipping.")
-            return None, None, None, None, None
+            return None, None, None, None, None # type: ignore
         if target_sfreq_continuous_hrv <= 0:
             self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Invalid target_sfreq_continuous_hrv ({target_sfreq_continuous_hrv}). Skipping.")
-            return None, None, None, None, None
+            return None, None, None, None, None # type: ignore
 
 
         self.logger.info(f"ECGHRVProcessor - P:{participant_id}: Processing R-peaks to HRV features.")
@@ -61,8 +61,8 @@ class ECGHRVProcessor:
                 os.makedirs(output_dir, exist_ok=True)
                 self.logger.info(f"ECGHRVProcessor - P:{participant_id}: Created output directory {output_dir}")
             except Exception as e_mkdir:
-                self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Failed to create output directory {output_dir}: {e_mkdir}", exc_info=True)
-                return None, None, None, None, None # Cannot save files
+                self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Failed to create output directory {output_dir}: {e_mkdir}", exc_info=True) # type: ignore
+                return None, None, None, None, None # type: ignore
 
         # Save NN intervals
         nn_intervals_df = pd.DataFrame({'NN_Interval_ms': nn_intervals_ms, 'NN_Interval_s': nn_intervals_s})
@@ -123,6 +123,6 @@ class ECGHRVProcessor:
                 self.logger.warning(f"ECGHRVProcessor - P:{participant_id}: Issues with NN interval data (NaNs, Infs, non-monotonic times, or mismatch lengths). Cannot generate continuous HRV.")
         else: # len(nn_intervals_ms) < 2
             self.logger.warning(f"ECGHRVProcessor - P:{participant_id}: Not enough NN intervals ({len(nn_intervals_ms)}) to generate continuous HRV signal.")
-
-        return (nn_intervals_path, nn_intervals_ms,
-                continuous_hrv_signal, continuous_hrv_time_vector, continuous_hrv_signal_path)
+        
+        # Return all computed values and paths as per the function signature
+        return nn_intervals_path, nn_intervals_ms, continuous_hrv_signal, continuous_hrv_time_vector, continuous_hrv_signal_path

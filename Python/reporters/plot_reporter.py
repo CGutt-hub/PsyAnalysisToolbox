@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd # Import pandas for type checking
 import numpy as np
 import pandas as pd # Import pandas for type checking
 import os
@@ -115,7 +116,7 @@ class PlotReporter:
         elif isinstance(data_payload, dict):
             if key_or_column in data_payload:
                 data_val = data_payload[key_or_column]
-                found = True
+                found = True # type: ignore
         else:
             self.logger.warning(f"Data extraction: data_payload is not a DataFrame or Dict (type: {type(data_payload)}). Cannot extract '{key_or_column}'.")
 
@@ -151,7 +152,7 @@ class PlotReporter:
             plt.close(fig) 
             return None
 
-    def _draw_significance_brackets(self, ax: plt.Axes, brackets_config: List[Dict[str, Any]]):
+    def _draw_significance_brackets(self, ax: Any, brackets_config: List[Dict[str, Any]]):
         """
         Draws significance brackets and text on a plot axis based on a configuration list.
 
@@ -172,10 +173,18 @@ class PlotReporter:
             if None in [x1, x2, y_start]:
                 self.logger.warning("Skipping significance bracket due to missing 'x1', 'x2', or 'y_start' in config.")
                 continue
-            
-            height, text, color, fontsize = config.get('height', y_start * 0.05), config.get('text', '*'), config.get('color', 'k'), config.get('fontsize', 10)
-            ax.plot([x1, x1, x2, x2], [y_start, y_start + height, y_start + height, y_start], lw=1.5, c=color)
-            ax.text((x1 + x2) * 0.5, y_start + height, text, ha='center', va='bottom', color=color, fontsize=fontsize)
+            try:
+                # Ensure x1, x2, y_start are floats for plotting
+                x1_f, x2_f, y_start_f = float(x1), float(x2), float(y_start) # type: ignore
+                height = config.get('height', y_start_f * 0.05)
+                text = config.get('text', '*')
+                color = config.get('color', 'k')
+                fontsize = config.get('fontsize', 10)
+                ax.plot([x1_f, x1_f, x2_f, x2_f], [y_start_f, y_start_f + height, y_start_f + height, y_start_f], lw=1.5, c=color)
+                ax.text((x1_f + x2_f) * 0.5, y_start_f + height, text, ha='center', va='bottom', color=color, fontsize=fontsize)
+            except (TypeError, ValueError) as e:
+                self.logger.warning(f"Skipping significance bracket due to conversion error: {e}")
+                continue
 
     def generate_plot(self, 
                       participant_id_or_group: str, 
@@ -434,7 +443,7 @@ class PlotReporter:
                 for ann_config in annotations:
                     if isinstance(ann_config, dict) and "text" in ann_config:
                         ax.text(ann_config.get('x', 0.05), ann_config.get('y', 0.95), 
-                                ann_config["text"], 
+                                                    ann_config["text"], # type: ignore
                                 transform=ann_config.get('transform', ax.transAxes), 
                                 fontsize=ann_config.get('fontsize', 10),
                                 verticalalignment=ann_config.get('va', 'top'),
@@ -510,7 +519,7 @@ class PlotReporter:
                     for ann_config in annotations:
                         if isinstance(ann_config, dict) and "text" in ann_config:
                             ax.text(ann_config.get('x', 0.05), ann_config.get('y', 0.95), 
-                                    ann_config["text"], 
+                                                    ann_config["text"], # type: ignore
                                     transform=ann_config.get('transform', ax.transAxes), 
                                     fontsize=ann_config.get('fontsize', 10),
                                     verticalalignment=ann_config.get('va', 'top'),

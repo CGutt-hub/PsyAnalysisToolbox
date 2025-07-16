@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
-import neurokit2 as nk
+import neurokit2 as nk # For ECG analysis functions
 from typing import Tuple, Optional # Added for more specific return type hinting
 
 class ECGPreprocessor:
@@ -18,7 +18,7 @@ class ECGPreprocessor:
                          ecg_sfreq: float,
                          participant_id: str,
                          output_dir: str,
-                         ecg_rpeak_method_config: Optional[str] = None) -> Tuple[Optional[str], Optional[np.ndarray]]:
+                         ecg_rpeak_method_config: Optional[str] = None) -> Tuple[Optional[str], Optional[pd.DataFrame]]:
         """Preprocesses ECG data to detect R-peaks.
 
         Args:
@@ -29,7 +29,7 @@ class ECGPreprocessor:
             ecg_rpeak_method_config (Optional[str]): The method for R-peak detection.
                                            If None, defaults to ECGPreprocessor.DEFAULT_RPEAK_DETECTION_METHOD.
  
-            tuple: (rpeak_times_path, rpeaks_samples_array)
+            tuple: (rpeak_times_path, rpeaks_df)
                    Returns (None, None) if preprocessing fails.
         """
         if ecg_signal is None or ecg_sfreq is None:
@@ -93,7 +93,13 @@ class ECGPreprocessor:
             
             self.logger.info(f"ECGPreprocessor - R-peak times saved to {rpeak_times_path}")
             self.logger.info(f"ECGPreprocessor - Preprocessing completed for {participant_id}.")
-            return rpeak_times_path, rpeaks
+            rpeak_times_df = pd.DataFrame({self.DEFAULT_RPEAK_COLUMN_NAME: rpeak_times_s})
+            rpeak_times_df['participant_id'] = participant_id # Add participant ID
+            # Note, we are NOT including times relative to other signals. Only ECG-derived times.
+            
+            rpeaks_df_out = pd.DataFrame({'R_Peak_Sample': rpeaks, 'R_Peak_Time_s': rpeak_times_s})
+            self.logger.info("ECGPreprocessor - R-peak times and samples returned as DataFrame.") # Changed to rpeaks_df_out
+            return rpeak_times_path, rpeaks_df_out # Return path and DataFrame
         except Exception as e:
-            self.logger.error(f"ECGPreprocessor - Error during preprocessing for {participant_id}: {e}", exc_info=True)
+            self.logger.error(f"ECGPreprocessor - Error during preprocessing for {participant_id}: {e}", exc_info=True) # type: ignore
             return None, None

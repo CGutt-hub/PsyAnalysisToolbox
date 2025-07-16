@@ -1,5 +1,6 @@
 import mne
 import numpy as np
+import pandas as pd  # For DataFrame handling
 from typing import Dict, Optional, Any, List, Tuple # Added List for picks and Tuple
 
 class EEGEpochProcessor:
@@ -28,7 +29,7 @@ class EEGEpochProcessor:
                       decim: int = DEFAULT_EPOCH_DECIM,
                       reject_by_annotation: bool = DEFAULT_EPOCH_REJECT_BY_ANNOTATION,
                       **kwargs: Any # To pass any other valid mne.Epochs parameters
-                      ) -> Optional[mne.Epochs]:
+                      ) -> Optional[pd.DataFrame]:  # Return a DataFrame
         """
         Creates epochs from processed raw EEG data.
 
@@ -47,7 +48,8 @@ class EEGEpochProcessor:
             **kwargs: Additional keyword arguments to pass to mne.Epochs.
 
         Returns:
-            Optional[mne.Epochs]: The created MNE Epochs object, or None if an error occurs.
+            Optional[pd.DataFrame]: A DataFrame representation of the epochs, where each row is an epoch,
+                                     and columns could include epoch data, event information, etc., or None if an error occurs.
         """
         if raw_processed is None:
             self.logger.warning("EEGEpochProcessor - Processed raw data not provided. Skipping epoch creation.")
@@ -68,11 +70,26 @@ class EEGEpochProcessor:
             epochs = mne.Epochs(raw_processed, events, event_id=event_id, tmin=tmin, tmax=tmax,
                                 picks=picks, baseline=baseline, reject=reject, preload=preload,
                                 decim=decim, reject_by_annotation=reject_by_annotation, verbose=False, **kwargs)
-            if len(epochs) == 0:
-                self.logger.info("EEGEpochProcessor - No epochs were created (e.g., all events dropped or no events found for given IDs).")
-            else:
-                self.logger.info(f"EEGEpochProcessor - Created {len(epochs)} epochs.")
-            return epochs
+
+            if len(epochs) == 0: # Handle case where no epochs were created.
+                self.logger.info("EEGEpochProcessor - No epochs were created.")
+                return None
+
+            self.logger.info(f"EEGEpochProcessor - Created {len(epochs)} epochs. Converting to DataFrame.")
+
+            # Convert MNE Epochs to DataFrame
+            epochs_data = epochs.get_data() # epochs_data is (n_epochs, n_channels, n_times)
+            event_ids = epochs.events[:, 2] # Get event IDs for each epoch.
+
+            epochs_df = pd.DataFrame({
+                'epoch_data': list(epochs_data),  # Store 3D data as a list of 2D arrays (one per epoch)
+                'event_id': event_ids
+            })
+
+            # Add more relevant metadata as columns if needed (e.g., event names)
+
+            return epochs_df
+
         except Exception as e:
             self.logger.error(f"EEGEpochProcessor - Error creating epochs: {e}", exc_info=True)
             return None

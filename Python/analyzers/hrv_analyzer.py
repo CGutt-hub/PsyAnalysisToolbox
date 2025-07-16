@@ -5,6 +5,7 @@ import mne # For MNE Epochs type hint
 import neurokit2 as nk # For HRV calculations
 from typing import Dict, List, Optional # Added for type hinting
 class HRVAnalyzer:
+
     # Default parameters for HRV analysis
     DEFAULT_NNI_COLUMN_NAME = 'NN_Interval_ms'
     DEFAULT_HRV_METRIC_KEY_TEMPLATE = "hrv_{metric_name}_{scope}" # e.g., hrv_rmssd_Overall
@@ -17,6 +18,7 @@ class HRVAnalyzer:
     def calculate_rmssd_from_nni_array(self, nn_intervals_ms: np.ndarray) -> float:
         """Calculates RMSSD directly from an array of NN intervals in milliseconds."""
         # This method is quite specific, so its internal logic doesn't lend itself to many external defaults.
+
         if not isinstance(nn_intervals_ms, np.ndarray):
             self.logger.error("HRVAnalyzer (array) - Input nn_intervals_ms must be a numpy array.")
             return np.nan

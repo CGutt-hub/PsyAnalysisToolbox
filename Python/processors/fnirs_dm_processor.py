@@ -46,7 +46,7 @@ class FNIRSDesignMatrixProcessor:
                              condition_duration_config: Dict[str, float],
                              custom_regressors_df: Optional[pd.DataFrame] = None
                              ) -> Optional[pd.DataFrame]:
-        """
+        """      
         Creates a first-level design matrix for fNIRS GLM analysis.
 
         Args:
@@ -63,7 +63,7 @@ class FNIRSDesignMatrixProcessor:
                                                            Must have the same number of rows as the fNIRS data.
 
         Returns:
-            Optional[pd.DataFrame]: The generated design matrix, or None if an error occurs.
+            Optional[pd.DataFrame]: The generated design matrix, as a DataFrame, or None if an error occurs.
         """
         self.logger.info(f"FNIRSDesignMatrixProcessor: Creating design matrix for P:{participant_id}.")
 
@@ -247,8 +247,7 @@ class FNIRSDesignMatrixProcessor:
                 drift_order=self.drift_order_config,
                 fir_delays=self.fir_delays_config,
                 oversampling=self.oversampling_config
-            )
-
+            )  
             if custom_regressors_df is not None:
                 if len(custom_regressors_df) == len(design_matrix):
                     design_matrix = pd.concat([design_matrix, custom_regressors_df.reset_index(drop=True)], axis=1)

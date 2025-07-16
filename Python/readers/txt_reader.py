@@ -55,12 +55,16 @@ class TXTReader:
         # Determine final file_type
         final_file_type = self.DEFAULT_FILE_TYPE
         if file_type is not None:
-            if isinstance(file_type, str) and file_type.strip().lower() in ['csv', 'excel']:
-                final_file_type = file_type.strip().lower()
+            file_type_lower = file_type.strip().lower()
+            # Treat 'txt' as an alias for 'csv' since we are reading a delimited text file.
+            if file_type_lower == 'txt':
+                file_type_lower = 'csv'
+            if file_type_lower in ['csv', 'excel']:
+                final_file_type = file_type_lower
             else:
                 self.logger.warning(
                     f"TXTReader: Invalid value ('{file_type}') provided for 'file_type'. "
-                    f"Supported types are 'csv' or 'excel'. Using default: '{self.DEFAULT_FILE_TYPE}'."
+                    f"Supported types are 'csv', 'txt', or 'excel'. Using default: '{self.DEFAULT_FILE_TYPE}'."
                 )
 
         # Determine final sheet_name (only relevant for excel)

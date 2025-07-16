@@ -65,7 +65,7 @@ class FAIAnalyzer:
                         fai_val = np.log(power_right) - np.log(power_left)
                         fai_results[condition_name][pair_name] = fai_val
                         self.logger.debug(f"FAIAnalyzer - FAI {pair_name} for {condition_name} (L:{power_left:.4e}, R:{power_right:.4e}): {fai_val:.4f}")
-                    else:
+                    else: # Either power_left OR power_right <= min_power_threshold
                         self.logger.warning(f"FAIAnalyzer - Zero/tiny power for FAI {pair_name}, {condition_name}. FAI set to NaN.")
                         fai_results[condition_name][pair_name] = np.nan
                 else:

@@ -75,6 +75,13 @@ class GLMAnalyzer:
         if rois_config is not None:
             if not isinstance(rois_config, dict) or not all(isinstance(roi_name, str) and isinstance(channels, list) and all(isinstance(ch, str) for ch in channels) for roi_name, channels in rois_config.items()):
                 self.logger.warning("GLMAnalyzer: rois_config has invalid structure. Expected Dict[str, List[str]]. Skipping ROI analysis.")
+                return initial_return_state
+            for roi_name, channels in rois_config.items():
+                invalid_channels = [channel for channel in channels if channel not in data_for_glm.ch_names]
+                if invalid_channels:
+                    self.logger.error(f"ROI {roi_name} contains invalid channels: {invalid_channels}")
+                    return initial_return_state
+
                 rois_config = None # Disable ROI analysis
             
             if activation_p_threshold is not None:

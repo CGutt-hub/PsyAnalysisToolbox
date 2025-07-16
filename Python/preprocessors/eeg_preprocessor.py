@@ -1,5 +1,6 @@
 import mne
 from mne_icalabel import label_components # For automatic ICA component labeling
+import pandas as pd # Added for DataFrame creation
 from typing import Optional, Tuple, List, Union
 
 class EEGPreprocessor:
@@ -30,7 +31,7 @@ class EEGPreprocessor:
                   ica_max_iter_config: Optional[Union[int, str]] = None,
                   resample_sfreq_config: Optional[float] = None, # New parameter for resampling
                   ica_labeling_method_config: Optional[str] = None
-                  ) -> Optional[mne.io.Raw]:
+                  ) -> Optional[pd.DataFrame]:
         """
         Preprocesses raw EEG data.
         Args:
@@ -196,7 +197,27 @@ class EEGPreprocessor:
                 self.logger.warning(f"EEGPreprocessor - Automatic ICA labeling failed: {e_icalabel}. ICA components not automatically excluded. Manual inspection might be needed.", exc_info=True)
 
             self.logger.info("EEGPreprocessor - EEG preprocessing completed.")
-            return raw_eeg
+            # Create and return DataFrame
+            eeg_data_df = self._create_eeg_dataframe(raw_eeg)
+            return eeg_data_df # Return the DataFrame
+
         except Exception as e:
             self.logger.error(f"EEGPreprocessor - Error during EEG preprocessing: {e}", exc_info=True)
             return None
+
+    def _create_eeg_dataframe(self, raw_eeg: mne.io.Raw) -> pd.DataFrame:
+        """Converts MNE Raw object to a DataFrame with 'time' and channel data."""
+        if raw_eeg is None:
+            self.logger.warning("EEGPreprocessor - No preprocessed EEG data to convert.")
+            return pd.DataFrame()
+        try:
+            data = raw_eeg.get_data()
+            ch_names = raw_eeg.ch_names
+            df = pd.DataFrame(data.T, columns=ch_names) # type: ignore
+            # Add a time column (in seconds)
+            df['time'] = raw_eeg.times
+            cols = ['time'] + ch_names
+            return df[cols]
+        except Exception as e:
+            self.logger.error(f"EEGPreprocessor - Error converting Raw object to DataFrame: {e}", exc_info=True)
+            return pd.DataFrame()

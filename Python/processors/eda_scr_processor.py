@@ -105,7 +105,7 @@ class EDASCRProcessor:
                 scr_features_path = None # Indicate failure to save
             
             return scr_features_path, scr_features_df
-
+            
         except Exception as e:
             self.logger.error(f"EDASCRProcessor - P:{participant_id}: Error during SCR feature extraction: {e}", exc_info=True)
             return None, None

@@ -144,7 +144,7 @@ class XDFReader:
                     raw_eeg = mne.io.RawArray(data, info, verbose=False)
 
                     loaded_data['eeg'] = raw_eeg
-                    processed_stream_names.add(self._eeg_stream_name)
+                    #processed_stream_names.add(self._eeg_stream_name) # Will be processed later
                     self.logger.info(f"XDFReader - Loaded EEG data with {len(ch_names)} channels at {sfreq} Hz.")
 
                 except Exception as e:
@@ -152,6 +152,27 @@ class XDFReader:
                     loaded_data['eeg'] = None
             else:
                 self.logger.warning(f"XDFReader - EEG stream '{self._eeg_stream_name}' not found.")
+                loaded_data['eeg'] = None
+
+            # Convert EEG to DataFrame if loaded
+            if 'eeg' in loaded_data and loaded_data['eeg'] is not None:
+                try:
+                    raw_eeg = loaded_data['eeg']
+                    eeg_data = raw_eeg.get_data()  # NumPy array: (channels, times)
+                    eeg_times = raw_eeg.times  # NumPy array: (times,) in seconds relative to start
+                    eeg_ch_names = raw_eeg.ch_names
+                    eeg_sfreq = raw_eeg.info['sfreq']
+
+                    eeg_df = pd.DataFrame(np.atleast_2d(eeg_data).T, columns=eeg_ch_names) # Ensure 2D before transpose
+                    eeg_df['time'] = pd.Series(eeg_times) # Add a time column in seconds relative to the stream start.
+                    eeg_df['time_xdf'] = loaded_data.get('eeg_times', np.full(len(eeg_times), np.nan)).tolist() # If ecg_times available, use them, else NaNs.
+
+                    loaded_data['eeg_df'] = eeg_df  # Replace the MNE object with the DataFrame.
+                    del loaded_data['eeg']  # Remove the original MNE object
+                    self.logger.info(f"XDFReader - Converted EEG data to DataFrame with shape {eeg_df.shape}.")
+                except Exception as e_convert:
+                    self.logger.error(f"XDFReader - Error converting EEG to DataFrame: {e_convert}", exc_info=True)
+                    # Even if conversion fails, leave 'eeg' as None.
                 loaded_data['eeg'] = None
 
             # --- Load ECG ---
@@ -172,7 +193,7 @@ class XDFReader:
                     loaded_data['ecg_signal'] = ecg_signal
                     loaded_data['ecg_sfreq'] = ecg_sfreq
                     loaded_data['ecg_times'] = ecg_times # Store absolute times for alignment
-                    processed_stream_names.add(self._ecg_stream_name)
+                    #processed_stream_names.add(self._ecg_stream_name) # Processed later.
                     self.logger.info(f"XDFReader - Loaded ECG data at {ecg_sfreq} Hz.")
 
                 except Exception as e:
@@ -184,6 +205,28 @@ class XDFReader:
                 self.logger.warning(f"XDFReader - ECG stream '{self._ecg_stream_name}' not found.")
                 loaded_data['ecg_signal'] = None
                 loaded_data['ecg_sfreq'] = None
+                loaded_data['ecg_times'] = None
+
+            # Convert ECG to DataFrame
+            if 'ecg_signal' in loaded_data and loaded_data['ecg_signal'] is not None:
+                try:
+                    ecg_df = pd.DataFrame({'ecg_signal': loaded_data['ecg_signal']})
+                    ecg_df['time_xdf'] = loaded_data.get('ecg_times', np.full(len(ecg_df), np.nan)) # If absolute times exist, use, else nan
+                    if loaded_data['ecg_sfreq'] is not None:
+                        ecg_df.index = pd.Index(np.arange(len(ecg_df)) / float(loaded_data['ecg_sfreq']), name='time') # relative time in seconds
+                    else:
+                        self.logger.warning("XDFReader - ECG sampling frequency is None, cannot set DataFrame index to relative time.")
+
+                    loaded_data['ecg_df'] = ecg_df # Replace signal and times with DataFrame
+                    del loaded_data['ecg_signal'], loaded_data['ecg_sfreq'], loaded_data['ecg_times']
+                    self.logger.info(f"XDFReader - Converted ECG data to DataFrame with shape {ecg_df.shape}.")
+                except Exception as e_convert:
+                    self.logger.error(f"XDFReader - Error converting ECG to DataFrame: {e_convert}", exc_info=True)
+                    # In case of error, we do NOT re-populate the old variables. The modality will be considered missing
+                loaded_data['ecg_signal'] = None
+                loaded_data['ecg_sfreq'] = None
+                loaded_data['ecg_times'] = None
+
                 loaded_data['ecg_times'] = None
 
 
@@ -205,7 +248,7 @@ class XDFReader:
                     loaded_data['eda_signal'] = eda_signal
                     loaded_data['eda_sfreq'] = eda_sfreq
                     loaded_data['eda_times'] = eda_times # Store absolute times for alignment
-                    processed_stream_names.add(self._eda_stream_name)
+                    #processed_stream_names.add(self._eda_stream_name) # Processed later
                     self.logger.info(f"XDFReader - Loaded EDA data at {eda_sfreq} Hz.")
 
                 except Exception as e:
@@ -218,6 +261,29 @@ class XDFReader:
                 loaded_data['eda_signal'] = None
                 loaded_data['eda_sfreq'] = None
                 loaded_data['eda_times'] = None
+
+            # Convert EDA data to DataFrame
+            if 'eda_signal' in loaded_data and loaded_data['eda_signal'] is not None:
+                try:
+                    eda_df = pd.DataFrame({'eda_signal': loaded_data['eda_signal']})
+                    eda_df['time_xdf'] = loaded_data.get('eda_times', np.full(len(eda_df), np.nan))  # If absolute times, else NaN
+                    if loaded_data['eda_sfreq'] is not None:
+                        eda_df.index = pd.Index(np.arange(len(eda_df)) / float(loaded_data['eda_sfreq']), name='time') # relative time
+                    else:
+                        self.logger.warning("XDFReader - EDA sampling frequency is None, cannot set DataFrame index to relative time.")
+                        eda_df.index = pd.Index(np.arange(len(eda_df)), name='sample') # fallback to sample index
+                    
+                    loaded_data['eda_df'] = eda_df # Replace the signal and sfreq with the DataFrame
+                    del loaded_data['eda_signal'], loaded_data['eda_sfreq'], loaded_data['eda_times']
+                    self.logger.info(f"XDFReader - Converted EDA data to DataFrame with shape {eda_df.shape}.")
+                except Exception as e_convert:
+                    self.logger.error(f"XDFReader - Error converting EDA to DataFrame: {e_convert}", exc_info=True)
+                    # In error, do NOT keep old variables, effectively marking the modality as missing.
+
+                loaded_data['eda_signal'] = None
+                loaded_data['eda_sfreq'] = None
+                loaded_data['eda_times'] = None
+
 
             # --- Load fNIRS ---
             raw_fnirs_od = None # Initialize here
@@ -242,7 +308,7 @@ class XDFReader:
                     info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types) # type: ignore
                     raw_fnirs_od = mne.io.RawArray(data, info, verbose=False)
                     self.logger.info(f"XDFReader - Loaded fNIRS data with {len(ch_names)} channels at {sfreq} Hz.")
-                    processed_stream_names.add(self._fnirs_stream_name)
+                    #processed_stream_names.add(self._fnirs_stream_name) # Will be processed into df later
 
                 except Exception as e:
                     raw_fnirs_od = None # Already initialized, but good to be explicit on error path
@@ -251,6 +317,26 @@ class XDFReader:
             else:
                 self.logger.warning(f"XDFReader - fNIRS stream '{self._fnirs_stream_name}' not found.")
                 # raw_fnirs_od and fnirs_stream_start_time_xdf remain None as initialized
+
+            # Convert fNIRS data to DataFrame
+            if 'fnirs_od' in loaded_data and loaded_data['fnirs_od'] is not None:
+                try:
+                    raw_fnirs = loaded_data['fnirs_od']
+                    fnirs_data = raw_fnirs.get_data()  # NumPy array: (channels, times)
+                    fnirs_times = raw_fnirs.times  # NumPy array: (times,) in seconds
+                    fnirs_ch_names = raw_fnirs.ch_names
+                    fnirs_sfreq = raw_fnirs.info['sfreq']
+
+                    fnirs_df = pd.DataFrame(fnirs_data.T, columns=fnirs_ch_names) # Transpose: (times, channels)
+                    fnirs_df['time'] = fnirs_times # Time in seconds relative to the start
+
+                    loaded_data['fnirs_od_df'] = fnirs_df  # Store as new DataFrame
+                    del loaded_data['fnirs_od']  # Remove MNE Raw object
+                    self.logger.info(f"XDFReader - Converted fNIRS data to DataFrame with shape {fnirs_df.shape}.")
+                except Exception as e_convert:
+                    self.logger.error(f"XDFReader - Error converting fNIRS data to DataFrame: {e_convert}", exc_info=True)
+                    # On error, leave the 'fnirs_od' entry empty.
+                loaded_data['fnirs_od'] = None
 
             loaded_data['fnirs_od'] = raw_fnirs_od
             loaded_data['fnirs_stream_start_time_xdf'] = fnirs_stream_start_time_xdf
@@ -274,7 +360,7 @@ class XDFReader:
                      'timestamp': marker_timestamps,
                      'marker_value': marker_values_raw
                  })
-                 processed_stream_names.add(self._marker_stream_name)
+                 #processed_stream_names.add(self._marker_stream_name) # Is already a dataframe, will be treated as "other" stream if needed
                  self.logger.info(f"XDFReader - Loaded {len(xdf_markers_df)} raw XDF markers.")
             else:
                 self.logger.warning(f"XDFReader - Marker stream '{self._marker_stream_name}' not found.")

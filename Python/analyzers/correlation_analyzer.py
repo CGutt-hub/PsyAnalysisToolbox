@@ -72,6 +72,9 @@ class CorrelationAnalyzer:
             # Add original names for clarity if used independently
             result_dict['var1_name'] = name1
             result_dict['var2_name'] = name2
+            #Add descriptive stats.
+            result_dict['var1_mean'] = series1.mean()
+            result_dict['var2_mean'] = series2.mean()
             self.logger.info(f"CorrelationAnalyzer - Result ({name1} vs {name2}): r={result_dict.get('r', np.nan):.3f}, p={result_dict.get('p-val', np.nan):.3f}")
             return result_dict
         except Exception as e:

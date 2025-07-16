@@ -28,7 +28,7 @@ class EDAPreprocessor:
         """
  Processes raw EDA signal to extract and save phasic and tonic components.
         Args:
-            eda_signal_raw (np.ndarray): The raw EDA signal.
+            eda_signal_raw (Union[np.ndarray, pd.Series]): The raw EDA signal.
             eda_sampling_rate (Union[int, float]): The sampling rate of the EDA signal.
             participant_id (str): The participant ID.
             output_dir (str): Directory to save the output file.
@@ -104,7 +104,8 @@ class EDAPreprocessor:
             eda_signals, _ = nk.eda_process(processed_eda_signal, sampling_rate=int(eda_sampling_rate), method=final_cleaning_method) # type: ignore[arg-type] # processed_eda_signal is np.ndarray, which is ArrayLike
             
             phasic_eda: np.ndarray = np.asarray(eda_signals[self.DEFAULT_PHASIC_COL_NAME].values)
-            tonic_eda: np.ndarray = np.asarray(eda_signals[self.DEFAULT_TONIC_COL_NAME].values)
+            tonic_eda: np.ndarray = np.asarray(eda_signals[self.DEFAULT_TONIC_COL_NAME].values) # type: ignore
+            eda_times = np.arange(len(processed_eda_signal)) / eda_sampling_rate # Create a times array (in seconds)
             self.logger.debug("EDAPreprocessor - EDA signal decomposed, phasic and tonic components extracted.")
  
             phasic_eda_path = os.path.join(output_dir, f"{participant_id}{self.DEFAULT_PHASIC_FILENAME_SUFFIX}")
@@ -115,7 +116,24 @@ class EDAPreprocessor:
             pd.DataFrame(tonic_eda, columns=[self.DEFAULT_TONIC_COL_NAME]).to_csv(tonic_eda_path, index=False)
             self.logger.info(f"EDAPreprocessor - Tonic EDA saved to {tonic_eda_path}")
 
+            # Create DataFrames for return
+            phasic_df = pd.DataFrame({
+                'time': eda_times,
+                'EDA_Phasic': phasic_eda,
+                'participant_id': participant_id # Add participant ID
+            })
+            tonic_df = pd.DataFrame({
+                'time': eda_times,
+                'EDA_Tonic': tonic_eda,
+                'participant_id': participant_id
+            })
+            
+            # Combine into a single DataFrame, keeping time and participant ID aligned
+            eda_df = pd.merge(phasic_df, tonic_df, on=['time', 'participant_id'])
+            self.logger.info(f"EDAPreprocessor - Preprocessed EDA returned as a single DataFrame, shape {eda_df.shape}.")
+            
             return phasic_eda_path, tonic_eda_path, phasic_eda, tonic_eda
+
         except Exception as e:
             self.logger.error(f"EDAPreprocessor - Error processing EDA for {participant_id}: {e}", exc_info=True)
             return None, None, None, None

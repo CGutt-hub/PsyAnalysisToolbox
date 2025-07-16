@@ -17,7 +17,7 @@ class FNIRSPreprocessor:
         self.logger = logger
         self.logger.info("FNIRSPreprocessor initialized.")
 
-    def process(self, fnirs_raw_od,
+    def process(self, fnirs_raw_od, participant_id: str, output_dir: str,
                   beer_lambert_ppf_config: Union[float, Tuple[float, float]],
                   short_channel_regression_config, # Moved up - non-default
                   motion_correction_method_config, # Moved up - non-default
@@ -43,7 +43,7 @@ class FNIRSPreprocessor:
             mne.io.Raw: Preprocessed fNIRS data containing haemoglobin (HbO, HbR) concentrations,
                         or None if an error occurs.
         """
-        if fnirs_raw_od is None:
+        if fnirs_raw_od is None or not participant_id or not output_dir:
             self.logger.warning("FNIRSPreprocessor - No raw fNIRS OD data provided. Skipping.")
             return None
         
@@ -105,6 +105,11 @@ class FNIRSPreprocessor:
             # Ensure data is loaded
             if hasattr(fnirs_raw_od, '_data') and fnirs_raw_od._data is None and fnirs_raw_od.preload is False:
                 fnirs_raw_od.load_data(verbose=False)
+
+            # Verify that raw data contains CW amplitude data
+            if 'fnirs_cw_amplitude' not in fnirs_raw_od.info.get_channel_types():
+                self.logger.error("FNIRSPreprocessor - No continuous wave amplitude fNIRS data found. Please ensure the data is correctly loaded.")
+                return None
 
             self.logger.info(f"FNIRSPreprocessor - Applying Beer-Lambert Law (PPF={beer_lambert_ppf_config}).")
             # Assuming fnirs_raw_od is raw intensity data, first convert to OD
@@ -177,25 +182,41 @@ class FNIRSPreprocessor:
             corrected_haemo.filter(l_freq=filter_band_config[0], h_freq=filter_band_config[1],
                                    h_trans_bandwidth=final_filter_h_trans_bandwidth,
                                    l_trans_bandwidth=final_filter_l_trans_bandwidth,
-                                   fir_design=final_filter_fir_design, verbose=False)
-            
+ fir_design=final_filter_fir_design, verbose=False)
+            # Convert MNE object to DataFrame
+            df = self._convert_haemo_to_dataframe(corrected_haemo)
             self.logger.info("FNIRSPreprocessor - fNIRS preprocessing completed.")
-            return corrected_haemo
+            return df
         except Exception as e:
             self.logger.error(f"FNIRSPreprocessor - Error during fNIRS preprocessing: {e}", exc_info=True)
             return None
 
     def save_preprocessed_data(self, fnirs_haemo_obj, participant_id, output_dir):
-        """Saves the preprocessed fNIRS haemoglobin data to a .fif file."""
+        """Saves the preprocessed fNIRS haemoglobin data to a CSV file."""
         if fnirs_haemo_obj is None:
-            self.logger.warning("FNIRSPreprocessor - No processed fNIRS object to save.")
-            return None
-        
+            self.logger.warning("FNIRSPreprocessor - No processed fNIRS object to save (CSV).")
+            return
+
+            
+    def _convert_haemo_to_dataframe(self, fnirs_haemo_obj):
+        """Converts MNE Raw object to a DataFrame."""
+        if fnirs_haemo_obj is None:
+            self.logger.warning("FNIRSPreprocessor - No processed fNIRS object to convert.")
+            return pd.DataFrame()
         try:
-            output_path = os.path.join(output_dir, f"{participant_id}_fnirs_haemo_proc_raw.fif")
-            fnirs_haemo_obj.save(output_path, overwrite=True, verbose=False)
-            self.logger.info(f"FNIRSPreprocessor - Processed fNIRS data saved to: {output_path}")
-            return output_path
+            data = fnirs_haemo_obj.get_data()
+            ch_names = fnirs_haemo_obj.ch_names
+            df = pd.DataFrame(data.T, columns=ch_names)  # Transpose to have channels as columns
+
+            # Add a time column (in seconds, relative to the start)
+            times = fnirs_haemo_obj.times
+            df['time'] = times  # Add as a new column
+
+            # Reorder columns to have 'time' as the first column
+            cols = ['time'] + ch_names
+            df = df[cols]
+
+            return df
         except Exception as e:
-            self.logger.error(f"FNIRSPreprocessor - Error saving processed fNIRS data for {participant_id}: {e}", exc_info=True)
-            return None
+            self.logger.error(f"FNIRSPreprocessor - Error converting MNE object to DataFrame: {e}", exc_info=True)
+            return pd.DataFrame()
