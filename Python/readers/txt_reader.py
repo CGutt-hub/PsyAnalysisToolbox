@@ -153,7 +153,7 @@ class TXTReader:
                         participant_id = participant_id_raw.strip() if isinstance(participant_id_raw, str) else None
                         if not participant_id:
                             self.logger.error(f"Participant ID (Subject) not found or is empty in header of {file_path}. Cannot process questionnaires.")
-                            return None
+                            return None  # Exit early if we can't get a valid PID
                         continue
                     elif line_stripped.startswith('*** LogFrame Start ***'):
                         in_log_frame = True
