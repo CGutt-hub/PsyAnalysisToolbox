@@ -49,8 +49,8 @@ class EEGEpochProcessor:
 
         Returns:
             Optional[pd.DataFrame]: A DataFrame representation of the epochs, where each row is an epoch,
-                                     and columns could include epoch data, event information, etc., or None if an error occurs.
-        """
+ and columns could include epoch data, event information, etc., or None if an error occurs.
+       """
         if raw_processed is None:
             self.logger.warning("EEGEpochProcessor - Processed raw data not provided. Skipping epoch creation.")
             return None
@@ -78,8 +78,12 @@ class EEGEpochProcessor:
             self.logger.info(f"EEGEpochProcessor - Created {len(epochs)} epochs. Converting to DataFrame.")
 
             # Convert MNE Epochs to DataFrame
-            epochs_data = epochs.get_data() # epochs_data is (n_epochs, n_channels, n_times)
-            event_ids = epochs.events[:, 2] # Get event IDs for each epoch.
+            epochs_data = epochs.get_data()  # epochs_data is (n_epochs, n_channels, n_times)
+            if epochs.events is not None and len(epochs.events) > 0:
+                event_ids = epochs.events[:, 2]  # Get event IDs for each epoch.
+            else:
+                self.logger.warning("No events found in the epochs object. Setting event_ids to None.")
+                event_ids = None
 
             epochs_df = pd.DataFrame({
                 'epoch_data': list(epochs_data),  # Store 3D data as a list of 2D arrays (one per epoch)

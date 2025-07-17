@@ -23,7 +23,7 @@ class EDAPreprocessor:
                          eda_sampling_rate: Union[int, float],
                          participant_id: str,
                          output_dir: str,
- eda_cleaning_method_config: Optional[str] = None) \
+                         eda_cleaning_method_config: Optional[str] = None) \
  -> Tuple[Optional[str], Optional[str], Optional[np.ndarray], Optional[np.ndarray]]:
         """
  Processes raw EDA signal to extract and save phasic and tonic components.
@@ -34,7 +34,7 @@ class EDAPreprocessor:
             output_dir (str): Directory to save the output file.
             eda_cleaning_method_config (Optional[str]): Method for nk.eda_clean.
                                                         Defaults to DEFAULT_EDA_CLEANING_METHOD.
-        Returns:
+        Returns:(pd.DataFrame, pd.DataFrame)
             tuple: (phasic_eda_path, tonic_eda_path, phasic_eda_array, tonic_eda_array)
                    Returns (None, None, None, None) if error.
         """
@@ -124,15 +124,14 @@ class EDAPreprocessor:
             })
             tonic_df = pd.DataFrame({
                 'time': eda_times,
-                'EDA_Tonic': tonic_eda,
+                'EDA_Tonic': tonic_eda, # type: ignore
                 'participant_id': participant_id
             })
-            
-            # Combine into a single DataFrame, keeping time and participant ID aligned
-            eda_df = pd.merge(phasic_df, tonic_df, on=['time', 'participant_id'])
-            self.logger.info(f"EDAPreprocessor - Preprocessed EDA returned as a single DataFrame, shape {eda_df.shape}.")
-            
+
+            self.logger.info(f"EDAPreprocessor - Preprocessed EDA returned as a two DataFrames, with phasuic components, shape {phasic_df.shape} and tonic components, shape {tonic_df.shape}.")
+
             return phasic_eda_path, tonic_eda_path, phasic_eda, tonic_eda
+
 
         except Exception as e:
             self.logger.error(f"EDAPreprocessor - Error processing EDA for {participant_id}: {e}", exc_info=True)

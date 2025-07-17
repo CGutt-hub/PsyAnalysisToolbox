@@ -15,12 +15,10 @@ class HRVAnalyzer:
         self.logger = logger
         self.logger.info("HRVAnalyzer initialized.")
 
-    def calculate_rmssd_from_nni_array(self, nn_intervals_ms: np.ndarray) -> float:
-        """Calculates RMSSD directly from an array of NN intervals in milliseconds."""
-        # This method is quite specific, so its internal logic doesn't lend itself to many external defaults.
-
-        if not isinstance(nn_intervals_ms, np.ndarray):
-            self.logger.error("HRVAnalyzer (array) - Input nn_intervals_ms must be a numpy array.")
+    def calculate_rmssd_from_nni_series(self, nn_intervals_ms: pd.Series) -> float:
+        """Calculates RMSSD directly from a Series of NN intervals in milliseconds."""
+        if not isinstance(nn_intervals_ms, pd.Series):
+            self.logger.error("HRVAnalyzer - Input nn_intervals_ms must be a Pandas Series.")
             return np.nan
         if nn_intervals_ms is None or len(nn_intervals_ms) < 2:
             self.logger.warning("HRVAnalyzer (array) - Not enough NN intervals for RMSSD.")
@@ -33,6 +31,10 @@ class HRVAnalyzer:
         except Exception as e:
             self.logger.error(f"HRVAnalyzer (array) - Error calculating RMSSD: {e}", exc_info=True)
             return np.nan
+
+    def calculate_rmssd_from_nni_array(self, nn_intervals_ms: np.ndarray) -> float:
+        """Calculates RMSSD from a numpy array of NN intervals in milliseconds (internal use)."""
+        return self.calculate_rmssd_from_nni_series(pd.Series(nn_intervals_ms))
 
     def calculate_hrv_metrics_from_nni_file(self, 
                                             nn_intervals_path: str, 
@@ -77,7 +79,7 @@ class HRVAnalyzer:
                  hrv_metrics[rmssd_overall_key] = np.nan
                  return hrv_metrics
             
-            hrv_metrics[rmssd_overall_key] = self.calculate_rmssd_from_nni_array(nn_intervals_ms)
+            hrv_metrics[rmssd_overall_key] = self.calculate_rmssd_from_nni_series(pd.Series(nn_intervals_ms))
             self.logger.info("HRVAnalyzer - Overall HRV calculation from file completed.")
             return hrv_metrics
         except Exception as e:

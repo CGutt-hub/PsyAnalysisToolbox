@@ -1,6 +1,7 @@
 import mne
 import numpy as np
 import pandas as pd
+from typing import Union # Added for Union type hint
 from typing import Dict, List, Optional, Any, Tuple
 
 class ERPAnalyzer:
@@ -13,8 +14,100 @@ class ERPAnalyzer:
         self.logger = logger
         self.logger.info("ERPAnalyzer initialized.")
 
+    def _reconstruct_epochs_from_df(self, data_df: pd.DataFrame, sfreq: float, ch_types_map: Dict[str, str]) -> Optional[mne.EpochsArray]:
+        """
+        Internal helper to reconstruct an MNE EpochsArray from a long-format DataFrame.
+
+        Args:
+            data_df (pd.DataFrame): DataFrame with columns ['epoch_id', 'condition', 'channel', 'time', 'value'].
+            sfreq (float): The sampling frequency.
+            ch_types_map (Dict[str, str]): A map of channel names to their types (e.g., {'Fz': 'eeg'}).
+
+        Returns:
+            Optional[mne.EpochsArray]: The reconstructed MNE Epochs object, or None on failure.
+        """
+        required_cols = ['epoch_id', 'condition', 'channel', 'time', 'value']
+        if not all(col in data_df.columns for col in required_cols):
+            self.logger.error(f"ERPAnalyzer: Input DataFrame is missing one or more required columns: {required_cols}")
+            return None
+
+        try:
+            # --- 1. Prepare metadata for MNE objects ---
+            ch_names = sorted(data_df['channel'].unique().tolist())
+            if not all(ch in ch_types_map for ch in ch_names):
+                missing = [ch for ch in ch_names if ch not in ch_types_map]
+                self.logger.error(f"ERPAnalyzer: The following channels from the DataFrame are missing from 'ch_types_map': {missing}")
+                return None
+
+            times = np.sort(data_df['time'].unique())
+            tmin = times[0]
+
+            epoch_info = data_df[['epoch_id', 'condition']].drop_duplicates().sort_values('epoch_id').reset_index(drop=True)
+            n_epochs = len(epoch_info)
+
+            conditions_cat = epoch_info['condition'].astype('category')
+            event_id_map = {name: i + 1 for i, name in enumerate(conditions_cat.cat.categories)}
+
+            event_codes = epoch_info['condition'].map(event_id_map).to_numpy()
+            events = np.array([np.arange(n_epochs), np.zeros(n_epochs, int), event_codes]).T
+
+            # --- 2. Create the 3D data array (n_epochs, n_channels, n_times) ---
+            data_pivoted = data_df.set_index(['epoch_id', 'channel', 'time'])['value'].unstack(level='time')
+
+            epoch_ids_sorted = epoch_info['epoch_id'].to_numpy()
+            full_multi_index = pd.MultiIndex.from_product([epoch_ids_sorted.tolist(), ch_names], names=['epoch_id', 'channel'])
+
+            data_aligned = data_pivoted.reindex(full_multi_index)
+            data_3d = data_aligned.to_numpy().reshape(n_epochs, len(ch_names), len(times))
+
+            if np.isnan(data_3d).any(): # Changed is.nan to np.isnan for NumPy array check
+                self.logger.warning("ERPAnalyzer: NaN values found after reconstructing 3D data array. This may indicate missing time points or channels for some epochs.")
+
+            # --- 3. Create the final MNE objects ---
+            info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=[ch_types_map[ch] for ch in ch_names]) # type: ignore
+            epochs_array = mne.EpochsArray(data_3d, info, events=events, tmin=tmin, event_id=event_id_map, verbose=False)
+
+            return epochs_array
+
+        except Exception as e:
+            self.logger.error(f"ERPAnalyzer: Failed to reconstruct MNE Epochs from DataFrame: {e}", exc_info=True)
+            return None
+
+    def calculate_component_features_from_df(self,
+                                             epochs_df: pd.DataFrame,
+                                             sfreq: float,
+                                             ch_types_map: Dict[str, str],
+                                             component_configs: Dict[str, Dict[str, Any]],
+                                             participant_id: Optional[str] = None
+                                             ) -> Optional[pd.DataFrame]:
+        """
+        Calculates features for specified ERP components from a long-format DataFrame.
+
+        Args:
+            epochs_df (pd.DataFrame): DataFrame in long format with required columns:
+                                      ['epoch_id', 'condition', 'channel', 'time', 'value'].
+            sfreq (float): The sampling frequency of the data.
+            ch_types_map (Dict[str, str]): A map of channel names to their types (e.g., {'Fz': 'eeg'}).
+            component_configs (Dict[str, Dict[str, Any]]): Configuration for ERP components.
+            participant_id (Optional[str]): Participant ID to include in the output DataFrame.
+
+        Returns:
+            Optional[pd.DataFrame]: DataFrame with ERP features, or None on error.
+        """
+        self.logger.info("ERPAnalyzer: Attempting to calculate ERP features from DataFrame.")
+        epochs_from_df = self._reconstruct_epochs_from_df(epochs_df, sfreq, ch_types_map)
+        if epochs_from_df is None:
+            self.logger.error("ERPAnalyzer: Could not reconstruct Epochs object from DataFrame. Aborting feature calculation.")
+            return None
+
+        return self.calculate_component_features(
+            epochs=epochs_from_df,
+            component_configs=component_configs,
+            participant_id=participant_id
+        )
+
     def calculate_component_features(self,
-                                     epochs: mne.Epochs,
+                                     epochs: Union[mne.Epochs, mne.EpochsArray],
                                      component_configs: Dict[str, Dict[str, Any]],
                                      participant_id: Optional[str] = None
                                      ) -> Optional[pd.DataFrame]:
@@ -67,7 +160,10 @@ class ERPAnalyzer:
                         continue
 
                     # Create a temporary evoked object for the ROI and time window
-                    evoked_roi = evoked.copy().pick(channels).crop(tmin=tmin, tmax=tmax)
+                    # Ensure channels is a list for pick method
+                    channels_list = channels if isinstance(channels, list) else [channels]
+                    
+                    evoked_roi = evoked.copy().pick(channels_list).crop(tmin=tmin, tmax=tmax) # type: ignore
                     data_roi_avg = evoked_roi.data.mean(axis=0) # Average over selected channels for ROI
                     times_roi = evoked_roi.times
 
@@ -98,9 +194,26 @@ class ERPAnalyzer:
 
         return pd.DataFrame(all_features_list) if all_features_list else pd.DataFrame()
 
-    def get_averaged_erps(self, epochs: mne.Epochs) -> Dict[str, mne.Evoked]:
+    def get_averaged_erps_from_df(self,
+                                  epochs_df: pd.DataFrame,
+                                  sfreq: float,
+                                  ch_types_map: Dict[str, str]
+                                  ) -> Dict[str, mne.Evoked]:
+        """
+        Reconstructs MNE Epochs from a DataFrame and returns averaged Evoked objects.
+
+        Args:
+            See `calculate_component_features_from_df` for an explanation of the arguments.
+
+        Returns:
+            Dict[str, mne.Evoked]: A dictionary of MNE Evoked objects, one for each condition.
+        """
+        epochs_from_df = self._reconstruct_epochs_from_df(epochs_df, sfreq, ch_types_map)
+        return self.get_averaged_erps(epochs=epochs_from_df) if epochs_from_df else {}
+
+    def get_averaged_erps(self, epochs: Union[mne.Epochs, mne.EpochsArray]) -> Dict[str, mne.Evoked]:
         """Returns a dictionary of MNE Evoked objects, one for each condition."""
         if epochs is None:
             self.logger.error("ERPAnalyzer: Epochs object is None. Cannot get averaged ERPs.")
             return {}
-        return {condition: epochs[condition].average() for condition in epochs.event_id.keys() if len(epochs[condition]) > 0}
+        return {condition: epochs[condition].average() for condition in epochs.event_id.keys() if len(epochs[condition]) > 0} # type: ignore

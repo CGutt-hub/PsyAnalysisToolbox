@@ -1,6 +1,6 @@
 import mne
 from mne_icalabel import label_components # For automatic ICA component labeling
-import pandas as pd # Added for DataFrame creation
+import pandas as pd
 from typing import Optional, Tuple, List, Union
 
 class EEGPreprocessor:
@@ -11,13 +11,65 @@ class EEGPreprocessor:
     DEFAULT_ICA_MAX_ITER: Union[str, int] = 'auto' # MNE default
     DEFAULT_RESAMPLE_SFREQ: Optional[float] = None # No resampling by default, or e.g., 250.0
     DEFAULT_ICA_LABELING_METHOD = 'iclabel' # Method for mne_icalabel
+    import numpy as np # Import numpy for NaN checks
 
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("EEGPreprocessor initialized.")
 
+    def _reconstruct_raw_from_df(self, data_df: pd.DataFrame, sfreq: float, ch_types_map: dict) -> Optional[mne.io.RawArray]:
+        """
+        Internal helper to reconstruct an MNE RawArray from a long-format DataFrame.
+        """
+        required_cols = ['channel', 'time', 'value']
+        if not all(col in data_df.columns for col in required_cols):
+            self.logger.error(f"EEGPreprocessor: Input DataFrame for reconstruction is missing one or more required columns: {required_cols}")
+            return None
+
+        try:
+            self.logger.info("EEGPreprocessor: Reconstructing MNE Raw object from DataFrame...")
+            ch_names = sorted(data_df['channel'].unique().tolist())
+            
+            # For EEG, ch_types are typically just 'eeg'. We use the map but default to 'eeg'.
+            final_ch_types = [ch_types_map.get(ch, 'eeg') for ch in ch_names]
+
+            # Pivot to get a wide format (channels x times) and ensure correct channel order
+            data_wide = data_df.pivot_table(index='channel', columns='time', values='value').reindex(ch_names)
+            data_2d = data_wide.to_numpy()
+
+            if self.np.isnan(data_2d).any():
+                self.logger.warning("EEGPreprocessor: NaN values found after pivoting DataFrame for Raw reconstruction.")
+
+            info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=final_ch_types) # type: ignore
+            raw = mne.io.RawArray(data_2d, info, verbose=False)
+            self.logger.info("EEGPreprocessor: Successfully reconstructed Raw object.")
+            return raw
+
+        except Exception as e:
+            self.logger.error(f"EEGPreprocessor: Failed to reconstruct MNE Raw object from DataFrame: {e}", exc_info=True)
+            return None
+
+    def process_from_df(self,
+                        eeg_df: pd.DataFrame,
+                        sfreq: float,
+                        ch_types_map: dict,
+                        **kwargs
+                        ) -> Optional[pd.DataFrame]:
+        """
+        Preprocesses EEG data provided as a long-format DataFrame.
+        This is a wrapper around the MNE-object-based `process` method.
+        """
+        self.logger.info("EEGPreprocessor: Starting preprocessing from DataFrame.")
+        raw_eeg = self._reconstruct_raw_from_df(eeg_df, sfreq, ch_types_map)
+        if raw_eeg is None:
+            self.logger.error("EEGPreprocessor: Could not reconstruct Raw object from DataFrame. Aborting.")
+            return None
+
+        # Call the original method with the reconstructed raw object and pass all other configs
+        return self.process(raw_eeg=raw_eeg, **kwargs)
+
     def process(self,
-                  raw_eeg: mne.io.Raw,
+                  raw_eeg: Union[mne.io.Raw, mne.io.RawArray],
                   # Critical configs (must be provided by orchestrator)
                   eeg_filter_band_config: Tuple[Optional[float], Optional[float]],
                   ica_n_components_config: Optional[Union[int, float, str]], # Can be None, int, float, or 'rank'
@@ -205,7 +257,7 @@ class EEGPreprocessor:
             self.logger.error(f"EEGPreprocessor - Error during EEG preprocessing: {e}", exc_info=True)
             return None
 
-    def _create_eeg_dataframe(self, raw_eeg: mne.io.Raw) -> pd.DataFrame:
+    def _create_eeg_dataframe(self, raw_eeg: Union[mne.io.Raw, mne.io.RawArray]) -> pd.DataFrame:
         """Converts MNE Raw object to a DataFrame with 'time' and channel data."""
         if raw_eeg is None:
             self.logger.warning("EEGPreprocessor - No preprocessed EEG data to convert.")

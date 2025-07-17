@@ -116,6 +116,7 @@ class FNIRSDesignMatrixProcessor:
                             self.logger.warning(f"FNIRSDesignMatrixProcessor: P:{participant_id}: Could not convert event timing/duration values to float for marker '{marker_val}'. Error: {e_conv}. Skipping event.")
                             continue
 
+
                         onset_time_sec = timestamp_val - start_time_val
                         duration_sec = duration_val
 

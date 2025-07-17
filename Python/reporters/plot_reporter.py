@@ -837,7 +837,7 @@ class PlotReporter:
                 else:
                     ax.set_ylabel(plot_params.get('y_axis_label', 'Density'))
             else:
-                ax.text(0.5, 0.5, "KDE Plot (No Data or Missing X-column)", ha='center', va='center')
+                ax.text(0.5, 0.5, "KDE Plot (No Data or Missing X-column)", ha='center', va='center') 
                 ax.set_title(title)
             fig.tight_layout()
         except Exception as e:

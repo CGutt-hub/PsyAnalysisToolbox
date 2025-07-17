@@ -104,7 +104,7 @@ class MNEEventHandlingProcessor:
         # The 'condition' column from XDF is often a list of strings, so handle that.
         def get_first_element(x):
             return x[0] if isinstance(x, list) and x else x
-
+ 
         # Convert numeric markers (which might be strings) to condition names
         events_df['condition_name'] = pd.to_numeric(events_df['condition'].apply(get_first_element), errors='coerce')
         events_df = events_df.dropna(subset=['condition_name']) # Drop rows where marker wasn't numeric

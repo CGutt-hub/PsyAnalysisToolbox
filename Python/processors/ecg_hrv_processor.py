@@ -17,31 +17,29 @@ class ECGHRVProcessor:
                               original_sfreq: float,
                               participant_id: str,
                               output_dir: str,
-                              target_sfreq_continuous_hrv: float = DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV
-                              ) -> Tuple[Optional[str], Optional[np.ndarray],
-                              Optional[np.ndarray], Optional[np.ndarray], Optional[str]]:
+                              target_sfreq_continuous_hrv: float = DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV) -> Tuple[Optional[str], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[str]]:
         """
        Processes R-peak data to calculate NN-intervals, overall RMSSD, and a continuous HRV signal.
 
        Args:
-           rpeaks_samples (np.ndarray): Array of R-peak sample indices.
+        rpeaks_samples (np.ndarray): Array of R-peak sample indices.
+
            original_sfreq (float): Sampling frequency of the signal from which R-peaks were derived.
            participant_id (str): Participant ID for naming output files.
            output_dir (str): Directory to save processed files (NN-intervals, continuous HRV).
            target_sfreq_continuous_hrv (float): Target sfreq for continuous HRV. Defaults to ECGHRVProcessor.DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV.
 
-        Returns:
+   Returns:
             Tuple containing:
                 - nn_intervals_path (Optional[str]): Path to the saved NN-intervals CSV file.
-                - nn_intervals_ms (Optional[np.ndarray]): Array of NN-intervals in milliseconds.
+            - nn_intervals_ms (Optional[np.ndarray]): Array of NN-intervals in milliseconds.
                 - continuous_hrv_signal (Optional[np.ndarray]): The continuous HRV signal (interpolated NNIs in ms).
-                - continuous_hrv_time_vector (Optional[np.ndarray]): Time vector for the continuous HRV signal.
-                              continuous_hrv_signal_path (Optional[str]): Path to the saved continuous HRV signal CSV file.
-        """
+            - continuous_hrv_time_vector (Optional[np.ndarray]): Time vector for the continuous HRV signal.
+            continuous_hrv_signal_path (Optional[str]): Path to the saved continuous HRV signal CSV file."""
         if rpeaks_samples is None or len(rpeaks_samples) < 2:
             self.logger.warning(f"ECGHRVProcessor - P:{participant_id}: Not enough R-peaks ({len(rpeaks_samples) if rpeaks_samples is not None else 0}) provided. Skipping HRV processing.")
             return None, None, None, None, None
-        if original_sfreq <= 0:
+        if not isinstance(original_sfreq, (int, float)) or original_sfreq <= 0:
             self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Invalid original_sfreq ({original_sfreq}). Skipping.")
             return None, None, None, None, None # type: ignore
         if target_sfreq_continuous_hrv <= 0:

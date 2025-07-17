@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 import neurokit2 as nk # For ECG analysis functions
-from typing import Tuple, Optional # Added for more specific return type hinting
+from typing import Tuple, Optional, Union # Added for more specific return type hinting
 
 class ECGPreprocessor:
     # Class-level defaults
@@ -14,7 +14,7 @@ class ECGPreprocessor:
         self.logger = logger
         self.logger.info("ECGPreprocessor initialized.")
     def preprocess_ecg(self,
-                         ecg_signal: np.ndarray,
+                         ecg_signal: Union[np.ndarray, pd.Series],
                          ecg_sfreq: float,
                          participant_id: str,
                          output_dir: str,
@@ -32,6 +32,7 @@ class ECGPreprocessor:
             tuple: (rpeak_times_path, rpeaks_df)
                    Returns (None, None) if preprocessing fails.
         """
+        # Handle different input types for ecg_signal
         if ecg_signal is None or ecg_sfreq is None:
             self.logger.warning("ECGPreprocessor - No ECG signal or sampling frequency provided. Skipping preprocessing.")
             return None, None
@@ -39,6 +40,12 @@ class ECGPreprocessor:
         if not isinstance(ecg_sfreq, (int, float)) or ecg_sfreq <= 0:
             self.logger.error(f"ECGPreprocessor - Invalid ECG sampling frequency: {ecg_sfreq}. Must be a positive number. Skipping.")
             return None, None
+
+        # Extract signal as numpy array if a pd.Series is passed
+        if isinstance(ecg_signal, pd.Series):
+            ecg_signal_np = ecg_signal.values
+        else:
+            ecg_signal_np = ecg_signal
 
         # Determine final R-peak detection method
         final_rpeak_method = self.DEFAULT_RPEAK_DETECTION_METHOD # Start with default
@@ -68,7 +75,7 @@ class ECGPreprocessor:
             # Use NeuroKit2's ecg_peaks function
             self.logger.info(f"ECGPreprocessor - Detecting R-peaks with method: {final_rpeak_method}...")
             # The `method` parameter uses the specified algorithm from the passed config
-            signals, info = nk.ecg_peaks(ecg_signal, sampling_rate=int(ecg_sfreq), method=final_rpeak_method)
+            signals, info = nk.ecg_peaks(ecg_signal_np, sampling_rate=int(ecg_sfreq), method=final_rpeak_method)
             
             # Ensure the expected output key exists and is the correct type
             rpeaks_raw = info.get("ECG_R_Peaks")

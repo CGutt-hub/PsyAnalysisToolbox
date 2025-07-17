@@ -148,10 +148,12 @@ class TXTReader:
                         continue
                     elif line_stripped == '*** Header End ***':
                         in_header = False
-                        participant_id = header_data.get('Subject')
+                        # More robustly check for participant ID
+                        participant_id_raw = header_data.get('Subject')
+                        participant_id = participant_id_raw.strip() if isinstance(participant_id_raw, str) else None
                         if not participant_id:
-                            self.logger.warning(f"Participant ID (Subject) not found in header of {file_path}. Cannot process questionnaires.")
-                            return pd.DataFrame()
+                            self.logger.error(f"Participant ID (Subject) not found or is empty in header of {file_path}. Cannot process questionnaires.")
+                            return None
                         continue
                     elif line_stripped.startswith('*** LogFrame Start ***'):
                         in_log_frame = True

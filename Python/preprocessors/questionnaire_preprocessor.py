@@ -62,8 +62,8 @@ class QuestionnairePreprocessor:
         df = input_df.copy()
 
         # --- "Finding" (selecting and renaming) data ---
-        pid_col_original = config['participant_id_column_original']
-        item_map = config['item_column_map']
+        pid_col_original = config[self.CONFIG_KEY_PID_ORIGINAL]
+        item_map = config[self.CONFIG_KEY_ITEM_MAP]
         output_pid_name = config.get(self.CONFIG_KEY_OUTPUT_PID_NAME, self.DEFAULT_OUTPUT_PID_COL_NAME)
 
         if pid_col_original not in df.columns:

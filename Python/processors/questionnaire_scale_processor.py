@@ -137,4 +137,5 @@ class QuestionnaireScaleProcessor:
             final_output_df = pd.concat([pid_df, scores_df], axis=1)
             self.logger.debug(f"QuestionnaireScaleProcessor - Combined PID column '{participant_id_col}' with scores.")
 
+
         return final_output_df

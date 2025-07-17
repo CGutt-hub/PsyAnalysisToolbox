@@ -105,7 +105,7 @@ class ConnectivityAnalyzer:
                 tmin=tmin, tmax=tmax, mt_bandwidth=mt_bandwidth, mt_low_bias=mt_low_bias,
                 n_jobs=n_jobs, verbose=False, picks=actual_picks_for_conn # type: ignore[reportCallIssue]
             )
-            # Explicitly cast the result to guide Pylance.
+          # Explicitly cast the result to guide Pylance.
             # This cast assumes `result` is not None, which is true if no exception was raised.
             if isinstance(method, list):
                 return cast(List[SpectralConnectivity], result)
@@ -114,7 +114,55 @@ class ConnectivityAnalyzer:
         except Exception as e:
             self.logger.error(f"ConnectivityAnalyzer: Error calculating spectral connectivity: {e}", exc_info=True)
             return None
-        
+
+    def _extract_connectivity_data_to_df(self,
+                                       connectivity_result: Union[SpectralConnectivity, List[SpectralConnectivity]],
+                                       method: Union[str, List[str]]) -> pd.DataFrame:
+      """
+      Extracts connectivity data from SpectralConnectivity object(s) and returns a DataFrame.
+      Handles both single and multiple connectivity measures.
+
+      Args:
+          connectivity_result: The result from spectral_connectivity_epochs.
+          method: The connectivity method(s) used.
+
+      Returns:
+          pd.DataFrame: DataFrame with connectivity data.
+      """
+      all_conn_data = []
+
+      if isinstance(connectivity_result, list):  # Multiple methods
+          for conn, m in zip(connectivity_result, method):
+              n_epochs, n_channels, n_freqs = conn.get_data().shape
+              freqs = conn.freqs  # Access frequencies directly from the object
+
+              for i in range(n_epochs):
+                  for j in range(n_channels):
+                      for k in range(j + 1, n_channels):
+                          for l, freq in enumerate(freqs):
+                              all_conn_data.append({
+                                  'epoch': i,
+                                  'channel_i': conn.names[j],
+                                  'channel_j': conn.names[k],
+                                  'frequency': freq,
+                                  f'{m}_value': conn.get_data()[i, j, k, l] # Use the method name as the value column
+                              })
+      else:  # Single method
+          conn = connectivity_result
+          n_epochs, n_channels, n_freqs = conn.get_data().shape
+          freqs = conn.freqs
+          method_name = method if isinstance(method, str) else method[0] # Get the method name correctly
+
+          for i in range(n_epochs):
+              for j in range(n_channels):
+                  for k in range(j + 1, n_channels):
+                      for l, freq in enumerate(freqs):
+                          all_conn_data.append({'epoch': i, 'channel_i': conn.names[j],
+                                                'channel_j': conn.names[k], 'frequency': freq,
+                                                f'{method_name}_value': conn.get_data()[i, j, k, l]})
+
+      return pd.DataFrame(all_conn_data)
+
     def calculate_epoched_vs_continuous_plv(self,
                                             signal1_epochs: mne.Epochs,
                                             signal1_channels_to_average: List[str],

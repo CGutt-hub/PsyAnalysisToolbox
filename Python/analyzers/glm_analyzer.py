@@ -1,6 +1,7 @@
 import pandas as pd
 import mne
 from mne_nirs.statistics import run_glm, RegressionResults # Use RegressionResults
+import numpy as np # Added for np.isnan
 from typing import Dict, List, Optional, Union # For type hinting
 
 class GLMAnalyzer:
@@ -10,6 +11,107 @@ class GLMAnalyzer:
     def __init__(self, logger):
         self.logger = logger
         self.logger.info("GLMAnalyzer initialized.")
+
+    def _reconstruct_raw_from_df(self, data_df: pd.DataFrame, sfreq: float, ch_types_map: Dict[str, str]) -> Optional[mne.io.RawArray]:
+        """
+        Internal helper to reconstruct an MNE RawArray from a long-format DataFrame.
+
+        Args:
+            data_df (pd.DataFrame): DataFrame with columns ['channel', 'time', 'value'].
+            sfreq (float): The sampling frequency.
+            ch_types_map (Dict[str, str]): A map of channel names to their types (e.g., {'S1-D1 hbo': 'fnirs_cw_amplitude'}).
+
+        Returns:
+            Optional[mne.io.RawArray]: The reconstructed MNE Raw object, or None on failure.
+        """
+        required_cols = ['channel', 'time', 'value']
+        if not all(col in data_df.columns for col in required_cols):
+            self.logger.error(f"GLMAnalyzer: Input DataFrame for reconstruction is missing one or more required columns: {required_cols}")
+            return None
+
+        try:
+            self.logger.info("GLMAnalyzer: Reconstructing MNE Raw object from DataFrame...")
+            ch_names = sorted(data_df['channel'].unique().tolist())
+            if not all(ch in ch_types_map for ch in ch_names):
+                missing_channels = [ch for ch in ch_names if ch not in ch_types_map]
+                self.logger.error(f"GLMAnalyzer: The following channels from the DataFrame are missing from 'ch_types_map': {missing_channels}")
+                return None
+
+            # Pivot to get a wide format (channels x times) and ensure correct channel order
+            data_wide = data_df.pivot_table(index='channel', columns='time', values='value').reindex(ch_names)
+            data_2d = data_wide.to_numpy()
+
+            if np.isnan(data_2d).any():
+                self.logger.warning("GLMAnalyzer: NaN values found after pivoting DataFrame for Raw reconstruction. This may indicate missing data points.")
+
+            info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=[ch_types_map[ch] for ch in ch_names]) # type: ignore
+            raw = mne.io.RawArray(data_2d, info, verbose=False)
+            self.logger.info("GLMAnalyzer: Successfully reconstructed Raw object.")
+            return raw
+
+        except Exception as e:
+            self.logger.error(f"GLMAnalyzer: Failed to reconstruct MNE Raw object from DataFrame: {e}", exc_info=True)
+            return None
+
+    def run_first_level_glm_from_df(self,
+                                    data_df: pd.DataFrame,
+                                    sfreq: float,
+                                    ch_types_map: Dict[str, str],
+                                    design_matrix_prepared: pd.DataFrame,
+                                    participant_id: str,
+                                    contrasts_config: Dict[str, Dict[str, float]],
+                                    **kwargs) -> Optional[pd.DataFrame]:
+        """pd.DataFrame,  Dict[str, RegressionResults]
+        Runs a first-level GLM from a DataFrame and returns a DataFrame of contrast results.
+
+        Args:
+            data_df (pd.DataFrame): Long-format DataFrame with columns ['channel', 'time', 'value'].
+            sfreq (float): Sampling frequency of the data.
+            ch_types_map (Dict[str, str]): Map of channel names to MNE channel types.
+            design_matrix_prepared (pd.DataFrame): Pre-computed design matrix.
+            participant_id (str): ID of the participant.
+            contrasts_config (Dict[str, Dict[str, float]]): Configuration for contrasts.
+            **kwargs: Other optional arguments for the internal run_first_level_glm method
+                      (rois_config, activation_p_threshold, etc.).
+
+        Returns:
+            Optional[pd.DataFrame]: A single DataFrame containing all contrast results, or None on error.
+        """
+        self.logger.info(f"GLMAnalyzer: Starting GLM analysis from DataFrame for P:{participant_id}.")
+        raw_from_df = self._reconstruct_raw_from_df(data_df, sfreq, ch_types_map)
+        if raw_from_df is None:
+            self.logger.error("GLMAnalyzer: Could not reconstruct Raw object from DataFrame. Aborting GLM.")
+            return None
+
+        # Call the original, MNE-object-based method
+        glm_results_dict = self.run_first_level_glm(
+            data_for_glm=raw_from_df,
+            design_matrix_prepared=design_matrix_prepared,
+            participant_id=participant_id,
+            contrasts_config=contrasts_config,
+            **kwargs
+        )
+
+        contrast_results = glm_results_dict.get('contrast_results')
+        if not contrast_results or not isinstance(contrast_results, dict):
+            self.logger.warning("GLMAnalyzer: No contrast results were generated from the GLM analysis.")
+            return pd.DataFrame()
+
+        # Combine all contrast DataFrames into one long-format DataFrame
+        all_contrasts_list = []
+        for contrast_name, contrast_df in contrast_results.items():
+            if isinstance(contrast_df, pd.DataFrame) and not contrast_df.empty:
+                df_copy = contrast_df.copy()
+                df_copy['contrast'] = contrast_name
+                all_contrasts_list.append(df_copy)
+
+        if not all_contrasts_list:
+            self.logger.warning("GLMAnalyzer: Contrast DataFrames were empty. Returning an empty DataFrame.")
+            return pd.DataFrame()
+
+        final_df = pd.concat(all_contrasts_list, ignore_index=True)
+        self.logger.info("GLMAnalyzer: Successfully combined all contrast results into a single DataFrame.")
+        return final_df
 
     def run_first_level_glm(self,
                           data_for_glm: mne.io.BaseRaw,
@@ -199,7 +301,7 @@ class GLMAnalyzer:
                 'glm_estimates': glm_estimates_dict, # This is now a dict of GLMEstimate objects
                 'contrast_results': contrast_results_dfs, # Dict of DataFrames
                 'active_rois': list(active_rois_set)
-            }
+            } #Return a tuple including multiple return datatypes
         except Exception as e_glm:
             self.logger.error(f"GLMAnalyzer: Critical error during GLM: {e_glm}", exc_info=True)
             return initial_return_state

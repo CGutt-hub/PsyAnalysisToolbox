@@ -91,7 +91,7 @@ class EEGfNIRSMappingProcessor:
         eeg_channel_names_set = set(eeg_info['ch_names'])
     
         # Case 1: No active fNIRS ROIs provided.
-        if not fnirs_active_rois:
+        if not fnirs_active_rois or len(fnirs_active_rois) == 0:
             self.logger.warning("No active fNIRS ROIs provided. Attempting to use default EEG channels.")
             final_selected_channels = self._get_fallback_channels(eeg_channel_names_set)
             if not final_selected_channels and not self.default_eeg_channels_for_plv:

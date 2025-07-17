@@ -35,7 +35,7 @@ class EDASCRProcessor:
         Returns:
             Tuple containing:
                 - scr_features_path (Optional[str]): Path to the saved SCR features CSV file.
-                - scr_features_df (Optional[pd.DataFrame]): DataFrame containing features of detected SCRs.
+            - scr_features_df (Optional[pd.DataFrame]): DataFrame containing features of detected SCRs.
                                                             Columns include: 'SCR_Onset_Time', 'SCR_Peak_Time',
                                                             'SCR_Amplitude', 'SCR_RiseTime', 'SCR_RecoveryTime'.
                                                             Times are in seconds from the start of the signal.
@@ -49,7 +49,7 @@ class EDASCRProcessor:
         if eda_sampling_rate <= 0:
             self.logger.error(f"EDASCRProcessor - Invalid EDA sampling rate: {eda_sampling_rate}. Skipping.")
             return None, None
-
+            
         self.logger.info(f"EDASCRProcessor - P:{participant_id}: Detecting SCRs and extracting features.")
 
         # Ensure output directory exists
@@ -63,6 +63,10 @@ class EDASCRProcessor:
 
 
         try:
+            if not isinstance(phasic_eda_signal, np.ndarray):
+                self.logger.error(f"EDASCRProcessor - Expected 'phasic_eda_signal' to be a numpy array, but got {type(phasic_eda_signal)}. Cannot proceed.")
+                return None, None 
+
             _, info = nk.eda_peaks(
                 phasic_eda_signal,
                 sampling_rate=eda_sampling_rate,

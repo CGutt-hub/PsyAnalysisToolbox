@@ -4,7 +4,7 @@ from mne_nirs.signal_enhancement import short_channel_regression
 from mne_nirs.channels import get_long_channels, get_short_channels
 import numpy as np
 import pandas as pd
-from typing import Union, Optional, Tuple, List # Added Optional, Tuple, List
+from typing import Union, Optional, Tuple, List, Dict # Added Dict for type hints
 
 class FNIRSPreprocessor:
     # Class-level defaults
@@ -17,7 +17,61 @@ class FNIRSPreprocessor:
         self.logger = logger
         self.logger.info("FNIRSPreprocessor initialized.")
 
-    def process(self, fnirs_raw_od, participant_id: str, output_dir: str,
+    def _reconstruct_raw_from_df(self, data_df: pd.DataFrame, sfreq: float, ch_types_map: Dict[str, str]) -> Optional[mne.io.RawArray]:
+        """
+        Internal helper to reconstruct an MNE RawArray from a long-format DataFrame.
+        This assumes the data in the DataFrame is optical density (OD).
+        """
+        required_cols = ['channel', 'time', 'value']
+        if not all(col in data_df.columns for col in required_cols):
+            self.logger.error(f"FNIRSPreprocessor: Input DataFrame for reconstruction is missing columns: {required_cols}")
+            return None
+
+        try:
+            self.logger.info("FNIRSPreprocessor: Reconstructing MNE Raw object from DataFrame...")
+            ch_names = sorted(data_df['channel'].unique().tolist())
+            
+            # For fNIRS OD, the channel types will be 'fnirs_od'
+            final_ch_types = [ch_types_map.get(ch, 'fnirs_od') for ch in ch_names]
+
+            data_wide = data_df.pivot_table(index='channel', columns='time', values='value').reindex(ch_names)
+            data_2d = data_wide.to_numpy()
+
+            if np.isnan(data_2d).any():
+                self.logger.warning("FNIRSPreprocessor: NaN values found after pivoting DataFrame for Raw reconstruction.")
+
+            info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=final_ch_types) # type: ignore
+            raw = mne.io.RawArray(data_2d, info, verbose=False)
+            self.logger.info("FNIRSPreprocessor: Successfully reconstructed Raw OD object.")
+            return raw
+
+        except Exception as e:
+            self.logger.error(f"FNIRSPreprocessor: Failed to reconstruct MNE Raw object from DataFrame: {e}", exc_info=True)
+            return None
+
+    def process_from_df(self,
+                        fnirs_od_df: pd.DataFrame,
+                        sfreq: float,
+                        ch_types_map: Dict[str, str],
+                        participant_id: str,
+                        output_dir: str,
+                        **kwargs) -> Optional[pd.DataFrame]:
+        """
+        Preprocesses fNIRS optical density data provided as a long-format DataFrame.
+        This is a wrapper around the MNE-object-based `process` method.
+        """
+        self.logger.info("FNIRSPreprocessor: Starting preprocessing from DataFrame.")
+        raw_od = self._reconstruct_raw_from_df(fnirs_od_df, sfreq, ch_types_map)
+        if raw_od is None:
+            self.logger.error("FNIRSPreprocessor: Could not reconstruct Raw OD object from DataFrame. Aborting.")
+            return None
+
+        # Call the original method with the reconstructed raw object and pass all other configs
+        return self.process(fnirs_raw_od=raw_od, participant_id=participant_id, output_dir=output_dir, **kwargs)
+
+    def process(self,
+                  fnirs_raw_od: Union[mne.io.Raw, mne.io.RawArray],
+                  participant_id: str, output_dir: str,
                   beer_lambert_ppf_config: Union[float, Tuple[float, float]],
                   short_channel_regression_config, # Moved up - non-default
                   motion_correction_method_config, # Moved up - non-default

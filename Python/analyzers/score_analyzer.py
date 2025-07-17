@@ -33,7 +33,7 @@ class ScoreAnalyzer:
             output_dir (Optional[str]): Directory to save the analysis results. Required if save_results is True.
             save_results (bool): If True, saves descriptive statistics and correlation matrix to CSV. Defaults to ScoreAnalyzer.DEFAULT_SAVE_RESULTS_FLAG.
             results_prefix (str): Prefix for the saved output files.
-
+ 
         Returns:
             Dict[str, Optional[pd.DataFrame]]: A dictionary containing DataFrames for:
                 'descriptives': Descriptive statistics for each scale.
