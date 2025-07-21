@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 import neurokit2 as nk # For ECG analysis functions
+import logging
 from typing import Tuple, Optional, Union # Added for more specific return type hinting
 
 class ECGPreprocessor:
@@ -10,7 +11,7 @@ class ECGPreprocessor:
     DEFAULT_RPEAK_FILENAME_SUFFIX = "_ecg_rpeak_times.csv"
     DEFAULT_RPEAK_COLUMN_NAME = "R_Peak_Time_s"
 
-    def __init__(self, logger):
+    def __init__(self, logger: logging.Logger):
         self.logger = logger
         self.logger.info("ECGPreprocessor initialized.")
     def preprocess_ecg(self,

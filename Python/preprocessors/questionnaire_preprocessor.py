@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Dict, Optional, Any
+import logging
 import numpy as np
 
 class QuestionnairePreprocessor:
@@ -17,7 +18,7 @@ class QuestionnairePreprocessor:
     CONFIG_KEY_INPUT_ITEM_ID_COL = 'input_item_id_col' # For long format
     CONFIG_KEY_INPUT_RESPONSE_VALUE_COL = 'input_response_value_col' # For long format
 
-    def __init__(self, logger):
+    def __init__(self, logger: logging.Logger):
         self.logger = logger
         self.logger.info("QuestionnairePreprocessor initialized.")
 

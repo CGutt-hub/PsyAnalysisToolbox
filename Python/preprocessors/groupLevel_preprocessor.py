@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import logging
 from typing import List, Dict, Any, Optional
 
 class GroupLevelPreprocessing:
@@ -26,7 +27,7 @@ class GroupLevelPreprocessing:
     METRIC_DEF_KEY_OUTPUT_ITERATION_COLUMN = 'output_iteration_column'
     METRIC_DEF_KEY_OUTPUT_METRIC_NAME_TEMPLATE = 'output_metric_name_template'
 
-    def __init__(self, logger, general_configs: Optional[Dict[str, Any]] = None):
+    def __init__(self, logger: logging.Logger, general_configs: Optional[Dict[str, Any]] = None):
         self.logger = logger
         self.general_configs = general_configs if general_configs is not None else {}
         self.logger.info("GroupLevelPreprocessing initialized.")

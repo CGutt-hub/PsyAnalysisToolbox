@@ -2,6 +2,7 @@ import neurokit2 as nk
 import pandas as pd
 import os
 import numpy as np
+import logging
 from typing import Optional, Tuple, Union, List, Any
 class EDAPreprocessor:
     # Class-level defaults
@@ -14,7 +15,7 @@ class EDAPreprocessor:
     DEFAULT_PHASIC_FILENAME_SUFFIX = "_phasic_eda.csv"
     DEFAULT_TONIC_FILENAME_SUFFIX = "_tonic_eda.csv"
 
-    def __init__(self, logger):
+    def __init__(self, logger: logging.Logger):
         self.logger = logger
         self.logger.info("EDAPreprocessor initialized.")
 
