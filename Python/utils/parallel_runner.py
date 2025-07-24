@@ -104,3 +104,56 @@ class ParallelTaskRunner:
         
         self.logger.info(f"Parallel execution finished. Collected {len(self.results)} results/statuses.")
         return self.results
+
+class DAGTask:
+    def __init__(self, name, func, deps, outputs, args=None, kwargs=None):
+        self.name = name
+        self.func = func
+        self.deps = set(deps)
+        self.outputs = set(outputs)
+        self.args = args or ()
+        self.kwargs = kwargs or {}
+
+class DAGParallelTaskRunner:
+    def __init__(self, tasks, max_workers=4, logger=None):
+        """
+        tasks: list of DAGTask
+        max_workers: number of parallel workers
+        logger: optional logger
+        """
+        self.tasks = {t.name: t for t in tasks}
+        self.max_workers = max_workers
+        self.logger = logger or logging.getLogger(__name__)
+        self.available = set()
+        self.completed = set()
+        self.results = {}
+
+    def run(self):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        pending = set(self.tasks.keys())
+        futures = {}
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            while pending or futures:
+                # Launch all ready tasks
+                ready = [name for name in pending if self.tasks[name].deps <= self.available]
+                for name in ready:
+                    task = self.tasks[name]
+                    self.logger.info(f"Launching task: {name} (deps: {task.deps})")
+                    futures[executor.submit(task.func, *task.args, **task.kwargs)] = name
+                    pending.remove(name)
+                # Wait for any task to finish
+                if not futures:
+                    break  # No tasks running, avoid deadlock
+                for future in as_completed(list(futures)):
+                    name = futures.pop(future)
+                    try:
+                        result = future.result()
+                        self.logger.info(f"Task completed: {name}")
+                    except Exception as exc:
+                        self.logger.error(f"Task '{name}' generated an exception: {exc}", exc_info=True)
+                        result = {'status': 'error', 'error_message': str(exc)}
+                    self.results[name] = result
+                    self.available |= self.tasks[name].outputs
+                    self.completed.add(name)
+                    break  # Go back to check for new ready tasks
+        return self.results
