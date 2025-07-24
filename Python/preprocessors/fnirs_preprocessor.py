@@ -48,8 +48,13 @@ class FNIRSPreprocessor:
     def _apply_beer_lambert(self, raw_intensity: mne.io.Raw, ppf: Union[float, Tuple[float, float]]) -> Optional[mne.io.Raw]:
         """Converts intensity data to optical density, then to haemoglobin concentration."""
         self.logger.info(f"FNIRSPreprocessor - Applying Beer-Lambert Law (PPF={ppf}).")
-        raw_od = mne.preprocessing.nirs.optical_density(raw_intensity.copy())
-        raw_haemo = raw_od.to_concentration(ppf=ppf)
+        # --- Pre-check for NaN data ---
+        if np.all(np.isnan(raw_intensity.get_data())):
+            self.logger.error("FNIRSPreprocessor - Input data to Beer-Lambert law is entirely NaN. Cannot proceed.")
+            return None
+
+        raw_od = mne.preprocessing.nirs.optical_density(raw_intensity) # type: ignore
+        raw_haemo = mne.preprocessing.nirs.beer_lambert_law(raw_od, ppf=ppf)  # type: ignore[arg-type]
         
         haemo_data = raw_haemo.get_data()
         if np.all(np.isnan(haemo_data)) or np.all(np.isinf(haemo_data)):

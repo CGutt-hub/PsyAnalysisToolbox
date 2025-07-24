@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
-from typing import Tuple, Optional, cast
+from typing import Tuple, Optional, Dict, Any
 
 class ECGHRVProcessor:
     # Default parameters for HRV processing
@@ -17,34 +17,32 @@ class ECGHRVProcessor:
                               original_sfreq: float,
                               participant_id: str,
                               output_dir: str,
-                              target_sfreq_continuous_hrv: float = DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV) -> Tuple[Optional[str], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[str]]:
+                              target_sfreq_continuous_hrv: float = DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV,
+                              total_duration_sec: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """
        Processes R-peak data to calculate NN-intervals, overall RMSSD, and a continuous HRV signal.
 
        Args:
-        rpeaks_samples (np.ndarray): Array of R-peak sample indices.
-
            original_sfreq (float): Sampling frequency of the signal from which R-peaks were derived.
            participant_id (str): Participant ID for naming output files.
            output_dir (str): Directory to save processed files (NN-intervals, continuous HRV).
            target_sfreq_continuous_hrv (float): Target sfreq for continuous HRV. Defaults to ECGHRVProcessor.DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV.
+           total_duration_sec (Optional[float]): Total duration of the original signal. If provided, the
+                                                 continuous HRV signal will be extrapolated to this duration.
 
-   Returns:
-            Tuple containing:
-                - nn_intervals_path (Optional[str]): Path to the saved NN-intervals CSV file.
-            - nn_intervals_ms (Optional[np.ndarray]): Array of NN-intervals in milliseconds.
-                - continuous_hrv_signal (Optional[np.ndarray]): The continuous HRV signal (interpolated NNIs in ms).
-            - continuous_hrv_time_vector (Optional[np.ndarray]): Time vector for the continuous HRV signal.
-            continuous_hrv_signal_path (Optional[str]): Path to the saved continuous HRV signal CSV file."""
+       Returns:
+            A dictionary containing HRV artifacts (e.g., 'hrv_nn_intervals_df',
+            'hrv_continuous_df', 'hrv_rmssd_ms'), or None if a critical error occurs.
+        """
         if rpeaks_samples is None or len(rpeaks_samples) < 2:
             self.logger.warning(f"ECGHRVProcessor - P:{participant_id}: Not enough R-peaks ({len(rpeaks_samples) if rpeaks_samples is not None else 0}) provided. Skipping HRV processing.")
-            return None, None, None, None, None
+            return None
         if not isinstance(original_sfreq, (int, float)) or original_sfreq <= 0:
             self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Invalid original_sfreq ({original_sfreq}). Skipping.")
-            return None, None, None, None, None # type: ignore
+            return None
         if target_sfreq_continuous_hrv <= 0:
             self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Invalid target_sfreq_continuous_hrv ({target_sfreq_continuous_hrv}). Skipping.")
-            return None, None, None, None, None # type: ignore
+            return None
 
 
         self.logger.info(f"ECGHRVProcessor - P:{participant_id}: Processing R-peaks to HRV features.")
@@ -59,8 +57,8 @@ class ECGHRVProcessor:
                 os.makedirs(output_dir, exist_ok=True)
                 self.logger.info(f"ECGHRVProcessor - P:{participant_id}: Created output directory {output_dir}")
             except Exception as e_mkdir:
-                self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Failed to create output directory {output_dir}: {e_mkdir}", exc_info=True) # type: ignore
-                return None, None, None, None, None # type: ignore
+                self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Failed to create output directory {output_dir}: {e_mkdir}", exc_info=True)
+                return None
 
         # Save NN intervals
         nn_intervals_df = pd.DataFrame({'NN_Interval_ms': nn_intervals_ms, 'NN_Interval_s': nn_intervals_s})
@@ -70,12 +68,13 @@ class ECGHRVProcessor:
             self.logger.info(f"ECGHRVProcessor - P:{participant_id}: NN intervals saved to {nn_intervals_path}")
         except Exception as e_save_nni:
             self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Failed to save NN intervals: {e_save_nni}", exc_info=True)
-            nn_intervals_path = None # Indicate failure
+
+        # 2. Calculate overall RMSSD
+        rmssd_ms = np.sqrt(np.mean(np.diff(nn_intervals_ms) ** 2)) if len(nn_intervals_ms) > 1 else np.nan
+        self.logger.info(f"ECGHRVProcessor - P:{participant_id}: Calculated overall RMSSD: {rmssd_ms:.2f} ms")
 
         # 3. Generate continuous HRV signal
-        continuous_hrv_signal = None
-        continuous_hrv_time_vector = None
-        continuous_hrv_signal_path = None
+        continuous_hrv_df = None
 
         if len(nn_intervals_ms) >= 2: # Need at least one NNI, which means at least 2 R-peaks
             rpeak_times_sec = rpeaks_samples / original_sfreq
@@ -92,11 +91,18 @@ class ECGHRVProcessor:
                 if num_nni_points >= 3: interp_kind = 'quadratic'
                 if num_nni_points >= 4: interp_kind = 'cubic'
                 
-                self.logger.debug(f"ECGHRVProcessor - P:{participant_id}: Using '{interp_kind}' interpolation for {num_nni_points} NNI points for continuous HRV.")
-                interp_func = interp1d(nn_interval_times_sec, nn_intervals_ms, kind=interp_kind, fill_value="extrapolate", bounds_error=False) # type: ignore
+                self.logger.debug(f"ECGHRVProcessor - P:{participant_id}: Using '{interp_kind}' interpolation for {num_nni_points} NNI points for continuous HRV. fill_value='extrapolate'")
+                # The Pylance error for fill_value='extrapolate' is a known issue with scipy's type hints; the code is functionally correct.
+                interp_func = interp1d(nn_interval_times_sec, nn_intervals_ms, kind=interp_kind, fill_value="extrapolate", bounds_error=False) # type: ignore[arg-type]
 
-                min_time_interp = nn_interval_times_sec[0]
-                max_time_interp = nn_interval_times_sec[-1]
+                # Define the time vector for the continuous signal
+                if total_duration_sec is not None and total_duration_sec > 0:
+                    self.logger.info(f"ECGHRVProcessor - P:{participant_id}: Extrapolating continuous HRV to full signal duration of {total_duration_sec:.2f}s.")
+                    min_time_interp = 0
+                    max_time_interp = total_duration_sec
+                else:
+                    min_time_interp = nn_interval_times_sec[0]
+                    max_time_interp = nn_interval_times_sec[-1]
 
                 if max_time_interp > min_time_interp: # Ensure a valid time range for arange
                     continuous_hrv_time_vector = np.arange(min_time_interp, max_time_interp, 1.0 / target_sfreq_continuous_hrv)
@@ -105,14 +111,17 @@ class ECGHRVProcessor:
                         self.logger.info(f"ECGHRVProcessor - P:{participant_id}: Generated continuous HRV signal (NNIs in ms) at {target_sfreq_continuous_hrv} Hz.")
 
                         # Save continuous HRV signal
-                        continuous_hrv_df = pd.DataFrame({'Time_s': continuous_hrv_time_vector, 'Interpolated_NNI_ms': continuous_hrv_signal})
+                        continuous_hrv_df = pd.DataFrame({'time_sec': continuous_hrv_time_vector, 'hrv_signal_ms': continuous_hrv_signal})
+                        # Final cleaning step to prevent issues with MNE epoching
+                        continuous_hrv_df.interpolate(method='linear', inplace=True)
+                        continuous_hrv_df.bfill(inplace=True)
+                        continuous_hrv_df.ffill(inplace=True)
                         continuous_hrv_signal_path = os.path.join(output_dir, f'{participant_id}_continuous_hrv_signal.csv')
                         try:
                             continuous_hrv_df.to_csv(continuous_hrv_signal_path, index=False)
                             self.logger.info(f"ECGHRVProcessor - P:{participant_id}: Continuous HRV signal saved to {continuous_hrv_signal_path}")
                         except Exception as e_save_cont_hrv:
                             self.logger.error(f"ECGHRVProcessor - P:{participant_id}: Failed to save continuous HRV signal: {e_save_cont_hrv}", exc_info=True)
-                            continuous_hrv_signal_path = None
                     else:
                         self.logger.warning(f"ECGHRVProcessor - P:{participant_id}: Interpolated time vector for continuous HRV is empty. Check duration and target sfreq.")
                 else:
@@ -122,5 +131,8 @@ class ECGHRVProcessor:
         else: # len(nn_intervals_ms) < 2
             self.logger.warning(f"ECGHRVProcessor - P:{participant_id}: Not enough NN intervals ({len(nn_intervals_ms)}) to generate continuous HRV signal.")
         
-        # Return all computed values and paths as per the function signature
-        return nn_intervals_path, nn_intervals_ms, continuous_hrv_signal, continuous_hrv_time_vector, continuous_hrv_signal_path
+        return {
+            'hrv_nn_intervals_df': nn_intervals_df,
+            'hrv_continuous_df': continuous_hrv_df,
+            'hrv_rmssd_ms': rmssd_ms
+        }

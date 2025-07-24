@@ -18,28 +18,21 @@ class MNEEventHandlingProcessor:
     """
 
     def __init__(self, 
-                 config: Dict[str, Any], 
-                 logger: logging.Logger, 
-                 conditions_to_map: Optional[List[str]] = None, 
-                 event_id_map: Optional[Dict[int, str]] = None):
+                 config: Dict[str, Any],
+                 logger: logging.Logger):
         """
         Initializes the MNEEventHandler.
 
         Args:
-            conditions_to_map (List[str]): Ordered list of condition names (e.g., ['Positive', 'Negative', 'Neutral']).
-            event_id_map (Dict[int, str]): Mapping from numeric marker values to condition names.
             config (Dict[str, Any]): Configuration dictionary. Expected keys:
                 - 'conditions_to_map' (List[str]): Ordered list of condition names (e.g., ['Positive', 'Negative', 'Neutral']).
                 - 'event_id_map' (Dict[int, str]): Mapping from numeric marker values to condition names.
             logger (logging.Logger): Logger instance.
         """
-
         self.logger = logger
         self.config = {**DEFAULT_MNE_EVENT_HANDLER_CONFIG, **config} # Merge provided config with defaults
-
         self.conditions_to_map = self.config.get("conditions_to_map", [])
         self.numeric_marker_to_name_map = self.config.get("event_id_map", {})
-
         if not self.numeric_marker_to_name_map:
             self.logger.warning("MNEEventHandler initialized with an empty 'event_id_map'. It can only map string conditions.")
         elif not self.conditions_to_map:
@@ -47,9 +40,9 @@ class MNEEventHandlingProcessor:
 
         self.logger.info(f"MNEEventHandler initialized. Will map {len(self.conditions_to_map)} conditions.")
 
-    def create_events(self, 
-                      events_df: pd.DataFrame, 
-                      sfreq: float) -> Tuple[Optional[np.ndarray], Dict[str, int], Dict[str, int]]:
+    def _create_events_array(self,
+                             events_df: pd.DataFrame,
+                             sfreq: float) -> Tuple[Optional[np.ndarray], Dict[str, int], Dict[str, int]]:
         """
         Creates MNE-compatible event arrays and mappings from an events DataFrame.
         Uses 'event_id_map' to map numeric markers to condition names, and 'conditions_to_map'
@@ -111,7 +104,7 @@ class MNEEventHandlingProcessor:
         events_df['condition_name'] = events_df['condition_name'].astype(int).map(self.numeric_marker_to_name_map)
 
         # 3. Map the condition names to the final MNE integer IDs
-        events_df['condition_id'] = events_df['condition_name'].map(mne_event_id_map).fillna(0).astype(int)
+        events_df['condition_id'] = events_df['condition_name'].map(lambda x: mne_event_id_map.get(x, 0)).astype(int)
 
         # Map trial identifiers to integer IDs (optional)
         trial_id_eprime_map = {}
@@ -123,7 +116,7 @@ class MNEEventHandlingProcessor:
             # Start numeric IDs high to avoid conflict with condition IDs (typically 1-999)
             unique_trial_ids_eprime = events_df['trial_identifier_eprime'].dropna().unique()
             trial_id_eprime_map = {name: i + 1000 for i, name in enumerate(unique_trial_ids_eprime)} 
-            events_df['trial_identifier_eprime_numeric'] = events_df['trial_identifier_eprime'].map(trial_id_eprime_map).fillna(0).astype(int)
+            events_df['trial_identifier_eprime_numeric'] = events_df['trial_identifier_eprime'].map(lambda x: trial_id_eprime_map.get(x, 0)).astype(int)
             if trial_id_eprime_map:
                 self.logger.info(f"Mapped {len(trial_id_eprime_map)} unique trial identifiers.")
             else:
@@ -134,6 +127,8 @@ class MNEEventHandlingProcessor:
         # MNE events array structure: [sample, previous_event_id, event_id]
         # Here, 'condition_id' serves as the MNE event_id.
         mne_events_sub_df = events_df[events_df['condition_id'] > 0][['onset_sample', 'condition_id']].copy()
+        if not isinstance(mne_events_sub_df, pd.DataFrame):
+            mne_events_sub_df = pd.DataFrame(mne_events_sub_df)
         if mne_events_sub_df.empty:
              self.logger.warning("After mapping conditions, no events remained with a valid condition ID (> 0). Returning empty events array.")
              return np.array([]).reshape(0, 3), mne_event_id_map, trial_id_eprime_map
@@ -145,7 +140,26 @@ class MNEEventHandlingProcessor:
         
         self.logger.info(f"Successfully created MNE events array with {len(mne_events_array)} events.")
         return mne_events_array, mne_event_id_map, trial_id_eprime_map    
-    
+
+    def get_final_event_map(self, present_conditions: List[str]) -> Dict[str, int]:
+        """
+        Creates a final event_id map for MNE, containing only the conditions present in the data.
+
+        This is used to ensure that the epoching function only considers conditions
+        that were actually found in the current participant's event list.
+
+        Args:
+            present_conditions (List[str]): A list of unique condition names found in the data.
+
+        Returns:
+            Dict[str, int]: A filtered event map (e.g., {'Positive': 1, 'Negative': 2}).
+        """
+        full_event_map = {name: i + 1 for i, name in enumerate(self.conditions_to_map)}
+        final_map = {cond: full_event_map[cond] for cond in present_conditions if cond in full_event_map}
+        
+        self.logger.info(f"Created final event map for epoching with {len(final_map)} conditions: {list(final_map.keys())}")
+        return final_map
+
     def create_events_df(self, 
                            events_df: pd.DataFrame, 
                            sfreq: float) -> Optional[pd.DataFrame]:
@@ -167,15 +181,15 @@ class MNEEventHandlingProcessor:
                                     - 'event_id': Integer ID representing the experimental condition.
                                     - 'condition_name': String name of the experimental condition.
         """
-        mne_events_array, mne_event_id_map, trial_id_eprime_map = self.create_events(events_df, sfreq)
+        mne_events_array, mne_event_id_map, trial_id_eprime_map = self._create_events_array(events_df, sfreq)
 
         if mne_events_array is None or not len(mne_events_array):
             self.logger.warning("No MNE events created. Returning None.")
             return None
         
-        events_df_out = pd.DataFrame(mne_events_array, columns=['sample', 'previous_event_id', 'event_id'])
+        events_df_out = pd.DataFrame(mne_events_array, columns=pd.Index(['sample', 'previous_event_id', 'event_id']))
         # Add condition names using the event_id mapping. Only mapped event_ids will be present    
-        events_df_out['condition_name'] = events_df_out['event_id'].map({v: k for k, v in mne_event_id_map.items()})
+        events_df_out['condition_name'] = events_df_out['event_id'].map(lambda x: {v: k for k, v in mne_event_id_map.items()}.get(x, None))
         
         self.logger.info(f"Created events DataFrame with {len(events_df_out)} events.")
         return events_df_out

@@ -15,60 +15,6 @@ class PSDAnalyzer:
         self.logger = logger
         self.logger.info("PSDAnalyzer initialized.")
 
-    def _reconstruct_epochs_from_df(self, data_df: pd.DataFrame, sfreq: float, ch_types_map: Dict[str, str]) -> Optional[mne.EpochsArray]:
-        """
-        Internal helper to reconstruct an MNE EpochsArray from a long-format DataFrame.
-
-        Args:
-            data_df (pd.DataFrame): DataFrame with columns ['epoch_id', 'condition', 'channel', 'time', 'value'].
-            sfreq (float): The sampling frequency.
-            ch_types_map (Dict[str, str]): A map of channel names to their types (e.g., {'Fz': 'eeg'}).
-
-        Returns:
-            Optional[mne.EpochsArray]: The reconstructed MNE Epochs object, or None on failure.
-        """
-        required_cols = ['epoch_id', 'condition', 'channel', 'time', 'value']
-        if not all(col in data_df.columns for col in required_cols):
-            self.logger.error(f"PSDAnalyzer: Input DataFrame for reconstruction is missing one or more required columns: {required_cols}")
-            return None
-
-        try:
-            ch_names = sorted(data_df['channel'].unique().tolist())
-            if not all(ch in ch_types_map for ch in ch_names):
-                missing = [ch for ch in ch_names if ch not in ch_types_map]
-                self.logger.error(f"PSDAnalyzer: The following channels from the DataFrame are missing from 'ch_types_map': {missing}")
-                return None
-
-            times = np.sort(data_df['time'].unique())
-            tmin = times[0]
-
-            epoch_info = data_df[['epoch_id', 'condition']].drop_duplicates().sort_values('epoch_id').reset_index(drop=True)
-            n_epochs = len(epoch_info)
-
-            conditions_cat = epoch_info['condition'].astype('category')
-            event_id_map = {name: i + 1 for i, name in enumerate(conditions_cat.cat.categories)} # type: ignore
-
-            event_codes = epoch_info['condition'].map(event_id_map).to_numpy()
-            events = np.array([np.arange(n_epochs), np.zeros(n_epochs, int), event_codes]).T
-
-            data_pivoted = data_df.set_index(['epoch_id', 'channel', 'time'])['value'].unstack(level='time')
-            epoch_ids_sorted = epoch_info['epoch_id'].to_numpy()
-            full_multi_index = pd.MultiIndex.from_product([epoch_ids_sorted.tolist(), ch_names], names=['epoch_id', 'channel'])
-
-            data_aligned = data_pivoted.reindex(full_multi_index)
-            data_3d = data_aligned.to_numpy().reshape(n_epochs, len(ch_names), len(times))
-
-            if np.isnan(data_3d).any():
-                self.logger.warning("PSDAnalyzer: NaN values found after reconstructing 3D data array. This may indicate missing time points or channels for some epochs.")
-
-            info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=[ch_types_map[ch] for ch in ch_names]) # type: ignore
-            epochs_array = mne.EpochsArray(data_3d, info, events=events, tmin=tmin, event_id=event_id_map, verbose=False)
-            return epochs_array
-
-        except Exception as e:
-            self.logger.error(f"PSDAnalyzer: Failed to reconstruct MNE Epochs from DataFrame: {e}", exc_info=True)
-            return None
-
     def _flatten_psd_dict_to_df(self, psd_dict: Dict[str, Dict[str, Dict[str, float]]], participant_id: Optional[str] = None) -> pd.DataFrame:
         """
         Converts the nested dictionary output from PSD calculation into a long-format DataFrame.
@@ -82,46 +28,14 @@ class PSDAnalyzer:
                         'condition': condition,
                         'band': band,
                         'channel': channel,
-                        'power': power
+                        'power': np.mean(power) # Use np.mean to ensure a scalar float, robust to array or scalar input
                     })
         return pd.DataFrame(all_psd_data)
-
-    def calculate_psd_from_df(self,
-                              epochs_df: pd.DataFrame,
-                              sfreq: float,
-                              ch_types_map: Dict[str, str],
-                              bands_config: Dict[str, Tuple[float, float]],
-                              participant_id: Optional[str] = None,
-                              psd_channels_of_interest: Optional[List[str]] = None,
-                              welch_params_config: Optional[Dict[str, Any]] = None
-                              ) -> Optional[pd.DataFrame]:
-        """
-        Calculates PSD from a long-format DataFrame and returns results as a DataFrame.
-        """
-        self.logger.info("PSDAnalyzer: Attempting to calculate PSD from DataFrame.")
-        epochs_from_df = self._reconstruct_epochs_from_df(epochs_df, sfreq, ch_types_map)
-        if epochs_from_df is None:
-            self.logger.error("PSDAnalyzer: Could not reconstruct Epochs object from DataFrame. Aborting PSD calculation.")
-            return None
-
-        # Call the original method to get the dictionary result
-        psd_results_dict = self.calculate_psd_from_epochs(
-            epochs_processed_all_conditions=epochs_from_df,
-            bands_config=bands_config,
-            psd_channels_of_interest=psd_channels_of_interest,
-            welch_params_config=welch_params_config
-        )
-
-        if not psd_results_dict:
-            self.logger.warning("PSDAnalyzer: PSD calculation from reconstructed epochs yielded no results.")
-            return pd.DataFrame()
-
-        return self._flatten_psd_dict_to_df(psd_results_dict, participant_id)
 
     def _calculate_psd_for_epochs(self, epochs: mne.epochs.BaseEpochs, sfreq: float,
                                   band_freqs: Tuple[float, float],
                                   welch_params_custom: Optional[Dict[str, Any]] = None,
-                                  condition_name_logging: str = ""):
+                                  condition_name_logging: str = "") -> Optional[Dict[str, float]]:
         """Helper to compute PSD for given epochs and band."""
 
         # Default Welch parameters
@@ -190,7 +104,9 @@ class PSDAnalyzer:
 
             # We want mean power per channel across the frequency band
             mean_power_per_channel = np.mean(psds_data, axis=1)
-            return mean_power_per_channel
+            # Return a dictionary mapping the channel names from the PSD object to their power
+            power_dict = {ch_name: power for ch_name, power in zip(psd_obj.ch_names, mean_power_per_channel)}
+            return power_dict
         except Exception as e:
             self.logger.error(f"PSDAnalyzer - Error computing PSD for band {band_freqs} {condition_name_logging}: {e}", exc_info=True)
             return None
@@ -229,62 +145,59 @@ class PSDAnalyzer:
                     continue
 
                 for band_name, band_freq_range in bands_config.items():
-                    power_per_channel_for_band = self._calculate_psd_for_epochs(
+                    power_dict_for_band = self._calculate_psd_for_epochs(
                         epochs, sfreq, band_freq_range, welch_params_config,
                         f"Cond: {condition_name}" # Band info is implicit in band_freq_range
                     )
-                    if power_per_channel_for_band is not None:
-                        for ch_idx, ch_name_in_epoch in enumerate(epochs.ch_names):
-                            psd_results[condition_name][band_name][ch_name_in_epoch] = power_per_channel_for_band[ch_idx]
+                    if power_dict_for_band is not None:
+                        psd_results[condition_name][band_name] = power_dict_for_band
 
             except Exception as e_cond_psd:
                 self.logger.error(f"PSDAnalyzer - Error computing PSD for condition '{condition_name}': {e_cond_psd}", exc_info=True)
 
         return psd_results
 
-    def calculate_psd_from_epochs(self,
-                              epochs_processed_all_conditions: Optional[mne.epochs.BaseEpochs],
-                              bands_config: Dict[str, Tuple[float, float]],
-                              psd_channels_of_interest: Optional[List[str]] = None,
-                              welch_params_config: Optional[Dict[str, Any]] = None
-                              ) -> Dict[str, Dict[str, Dict[str, float]]]:
+    def compute_psd(self,
+                    epochs: Optional[mne.epochs.BaseEpochs],
+                    bands: Dict[str, Tuple[float, float]],
+                    participant_id: Optional[str] = None,
+                    channels_of_interest: Optional[List[str]] = None,
+                    welch_params: Optional[Dict[str, Any]] = None
+                    ) -> Optional[pd.DataFrame]:
         """
         Calculates Power Spectral Density (PSD) for specified bands and channels from MNE Epochs.
 
         Args:
-            epochs_processed_all_conditions (mne.Epochs): MNE Epochs object containing data for all relevant conditions,
-                                                          potentially with metadata from EPrimePreprocessor.
-            bands_config (dict): Dictionary mapping band names to (fmin, fmax) tuples (e.g., {'Alpha': (8,12)}).
-            psd_channels_of_interest (list, optional): Specific list of channel names for PSD calculation.
-                                                       If None, PSD is calculated for all channels in the epochs.
-            welch_params_config (dict, optional): Parameters for Welch's method (e.g., {'n_fft': 1024, 'n_overlap': 512, 'window': 'hamming'}).
-                                                  If None, defaults are used (1s window, 50% overlap, hann window).
+            epochs (mne.Epochs): MNE Epochs object containing data for all relevant conditions.
+            bands (dict): Dictionary mapping band names to (fmin, fmax) tuples (e.g., {'Alpha': (8,12)}).
+            participant_id (str, optional): Participant ID to add to the output DataFrame.
+            channels_of_interest (list, optional): Specific list of channel names for PSD calculation.
+            welch_params (dict, optional): Parameters for Welch's method.
 
         Returns:
-            dict: psd_results in the format {'condition_name': {'band_name': {'channel_name': power_value}}}
+            Optional[pd.DataFrame]: A long-format DataFrame with PSD results, or None on error.
         """
-        psd_results: Dict[str, Dict[str, Dict[str, float]]] = {}
-        if epochs_processed_all_conditions is None or len(epochs_processed_all_conditions) == 0:
+        if epochs is None or len(epochs) == 0:
             self.logger.warning("PSDAnalyzer - No processed EEG epochs provided or epochs object is empty. Skipping PSD calculation.")
-            return psd_results
-        if not bands_config or not isinstance(bands_config, dict):
+            return None
+        if not bands or not isinstance(bands, dict):
             self.logger.warning("PSDAnalyzer - 'bands_config' must be a non-empty dictionary. Skipping.")
-            return psd_results
+            return None
 
         # Determine channels for PSD calculation
         final_psd_picks = []
-        if psd_channels_of_interest:
-            final_psd_picks = [ch for ch in psd_channels_of_interest if ch in epochs_processed_all_conditions.ch_names]
+        if channels_of_interest:
+            final_psd_picks = [ch for ch in channels_of_interest if ch in epochs.ch_names]
             if not final_psd_picks:
-                self.logger.warning(f"PSDAnalyzer - None of the specified 'psd_channels_of_interest' found in EEG data: {psd_channels_of_interest}. Skipping PSD.")
-                return psd_results
+                self.logger.warning(f"PSDAnalyzer - None of the specified 'channels_of_interest' found in EEG data: {channels_of_interest}. Skipping PSD.")
+                return None
         else: # No specific channels, no FAI -> calculate for all channels
             self.logger.info("PSDAnalyzer - No specific PSD channels or FAI pairs defined. Calculating PSD for all available channels.")
-            final_psd_picks = epochs_processed_all_conditions.ch_names
+            final_psd_picks = epochs.ch_names
 
         if not final_psd_picks:
              self.logger.warning(f"PSDAnalyzer - No channels selected for PSD calculation. Skipping.")
-             return psd_results
+             return None
 
         self.logger.info(f"PSDAnalyzer - Calculating PSD for channels: {final_psd_picks}")
 
@@ -292,20 +205,20 @@ class PSDAnalyzer:
             # If specific channels were requested for PSD, create a new epochs object with only those channels
             # Otherwise, use all channels present in the input epochs object
             # Use .copy() to avoid modifying the original epochs object passed in
-            epochs_for_psd = epochs_processed_all_conditions.copy().pick(final_psd_picks, verbose=False)
+            epochs_for_psd = epochs.copy().pick(final_psd_picks, verbose=False)
             if len(epochs_for_psd.ch_names) == 0:
                 self.logger.warning(f"PSDAnalyzer - No channels remained after picking for PSD: {final_psd_picks}. Skipping.")
-                return psd_results
+                return None
 
             # Step 1: Compute PSD for all relevant conditions and bands
             psd_results = self.compute_psd_per_condition(
                 epochs_all_conditions=epochs_for_psd, # Use the (potentially channel-subsetted) epochs
-                bands_config=bands_config,
-                welch_params_config=welch_params_config
+                bands_config=bands,
+                welch_params_config=welch_params
             )
 
             self.logger.info("PSDAnalyzer - PSD calculation completed.")
-            return psd_results
+            return self._flatten_psd_dict_to_df(psd_results, participant_id)
         except Exception as e:
             self.logger.error(f"PSDAnalyzer - Critical error calculating PSD: {e}", exc_info=True)
-            return psd_results # Return whatever was computed so far
+            return None

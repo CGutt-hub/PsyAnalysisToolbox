@@ -24,8 +24,7 @@ class EDAPreprocessor:
                          eda_sampling_rate: Union[int, float],
                          participant_id: str,
                          output_dir: str,
-                         eda_cleaning_method_config: Optional[str] = None) \
- -> Tuple[Optional[str], Optional[str], Optional[np.ndarray], Optional[np.ndarray]]:
+                         eda_cleaning_method_config: Optional[str] = None) -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
         """
  Processes raw EDA signal to extract and save phasic and tonic components.
         Args:
@@ -35,20 +34,19 @@ class EDAPreprocessor:
             output_dir (str): Directory to save the output file.
             eda_cleaning_method_config (Optional[str]): Method for nk.eda_clean.
                                                         Defaults to DEFAULT_EDA_CLEANING_METHOD.
-        Returns:(pd.DataFrame, pd.DataFrame)
-            tuple: (phasic_eda_path, tonic_eda_path, phasic_eda_array, tonic_eda_array)
-                   Returns (None, None, None, None) if error.
+        Returns:
+            A tuple containing two DataFrames (phasic_df, tonic_df), or None if an error occurs.
         """
         if eda_signal_raw is None or eda_sampling_rate is None:
             self.logger.warning("EDAPreprocessor - Raw EDA signal or sampling rate not provided. Skipping.")
-            return None, None, None, None
+            return None
 
         if not isinstance(eda_sampling_rate, (int, float)):
             self.logger.error(f"EDAPreprocessor - Invalid type for EDA sampling rate: {type(eda_sampling_rate)}. Expected int or float. Skipping.")
-            return None, None, None, None
+            return None
         if eda_sampling_rate <= 0:
             self.logger.error(f"EDAPreprocessor - Invalid EDA sampling rate: {eda_sampling_rate}. Skipping.")
-            return None, None, None, None
+            return None
 
         # Determine final EDA cleaning method
         final_cleaning_method = self.DEFAULT_EDA_CLEANING_METHOD # Start with default
@@ -71,7 +69,7 @@ class EDAPreprocessor:
                 self.logger.info(f"EDAPreprocessor - Created output directory {output_dir} for P:{participant_id}")
             except Exception as e_mkdir:
                 self.logger.error(f"EDAPreprocessor - Failed to create output directory {output_dir} for P:{participant_id}: {e_mkdir}", exc_info=True)
-                return None, None, None, None # Cannot save files
+                return None # Cannot save files
 
         try:
             # Ensure eda_signal_raw is a 1D numpy array for neurokit2 processing
@@ -86,18 +84,18 @@ class EDAPreprocessor:
                         processed_eda_signal = temp_array.ravel() # Flatten if it's a row or column vector
                     else:
                         self.logger.error("EDAPreprocessor - EDA signal is not 1D. Cannot process.")
-                        return None, None, None, None
+                        return None
                 else:
                     processed_eda_signal = temp_array # It's already a 1D numpy array
 
             if processed_eda_signal is None: # Should not happen with the above logic, but safety check
                  self.logger.error("EDAPreprocessor - Failed to prepare EDA signal for processing.")
-                 return None, None, None, None
+                 return None
 
             # Ensure processed_eda_signal is treated as a numpy array for type hinting/safety
             if not isinstance(processed_eda_signal, np.ndarray):
                  self.logger.error("EDAPreprocessor - Processed EDA signal is not a numpy array after preparation. Cannot proceed.")
-                 return None, None, None, None
+                 return None
  
             # Now we are confident processed_eda_signal is a np.ndarray
 
@@ -119,21 +117,21 @@ class EDAPreprocessor:
 
             # Create DataFrames for return
             phasic_df = pd.DataFrame({
-                'time': eda_times,
+                'time_sec': eda_times,
                 'EDA_Phasic': phasic_eda,
                 'participant_id': participant_id # Add participant ID
             })
             tonic_df = pd.DataFrame({
-                'time': eda_times,
+                'time_sec': eda_times,
                 'EDA_Tonic': tonic_eda, # type: ignore
                 'participant_id': participant_id
             })
 
             self.logger.info(f"EDAPreprocessor - Preprocessed EDA returned as a two DataFrames, with phasuic components, shape {phasic_df.shape} and tonic components, shape {tonic_df.shape}.")
 
-            return phasic_eda_path, tonic_eda_path, phasic_eda, tonic_eda
+            return phasic_df, tonic_df
 
 
         except Exception as e:
             self.logger.error(f"EDAPreprocessor - Error processing EDA for {participant_id}: {e}", exc_info=True)
-            return None, None, None, None
+            return None

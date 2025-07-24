@@ -45,8 +45,15 @@ class LogReporter:
                 formatter = logging.Formatter(self.DEFAULT_LOG_FORMATTER)
                 self._handler.setFormatter(formatter)
 
-                # Add handler to logger
+                # Add file handler to logger
                 self._logger.addHandler(self._handler)
+
+                # --- Add console (stream) handler for terminal mirroring ---
+                stream_handler = logging.StreamHandler()
+                stream_handler.setLevel(log_level)
+                stream_handler.setFormatter(formatter)
+                self._logger.addHandler(stream_handler)
+
                 self._logger.info(f"ParticipantLogger initialized for {participant_id}. Logging to {self.log_file_path} at level {log_level_str}.")
             except Exception as e:
                 print(f"CRITICAL ERROR (LogReporter): Failed to create file handler for participant {participant_id} at {self.log_file_path}: {e}. Participant-specific logs will NOT be saved to this file. They may appear in the main orchestrator log if configured, or be lost if not.")

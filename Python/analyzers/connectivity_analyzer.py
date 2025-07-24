@@ -163,66 +163,79 @@ class ConnectivityAnalyzer:
 
       return pd.DataFrame(all_conn_data)
 
-    def calculate_epoched_vs_continuous_plv(self,
+    def compute_plv(self, # Renamed from calculate_epoched_vs_continuous_plv
                                             signal1_epochs: mne.Epochs,
                                             signal1_channels_to_average: List[str],
                                             signal1_bands_config: Dict[str, Tuple[float, float]],
-                                            signal1_original_sfreq_for_event_timing: float,
-                                            signal2_continuous_data: np.ndarray,
-                                            signal2_sfreq: float,
-                                            signal1_name: str, # e.g., "EEG"
-                                            signal2_name: str, # e.g., "HRV" or "EDA"
-                                            participant_id: str
-                                            ) -> pd.DataFrame:
+                                            autonomic_signal_df: pd.DataFrame,
+                                            autonomic_signal_sfreq: float,
+                                            signal1_name: str,
+                                            autonomic_signal_name: str, participant_id: str,
+                                            reject_s2: Optional[Dict] = None
+                                            ) -> Optional[pd.DataFrame]:
         """
         Calculates trial-wise PLV between an epoched signal (averaged over channels and filtered into bands)
         and a continuous signal.
-        This is achieved by creating a parallel Epochs object for the continuous
-        signal, ensuring robust time alignment and resampling.
 
         Args:
-            signal1_epochs (mne.Epochs): Epoched data for the first signal.
+            signal1_epochs (mne.Epochs): Epoched data for the first signal (e.g., EEG).
             signal1_channels_to_average (list): List of channel names from signal1_epochs to average.
             signal1_bands_config (dict): Dictionary mapping band names to (fmin, fmax) for signal1.
-            signal1_original_sfreq_for_event_timing (float): Original sampling rate of the raw data
-                                                             from which signal1_epochs were derived.
-            signal2_continuous_data (np.ndarray): Full continuous data for the second signal.
-            signal2_sfreq (float): Sampling frequency of signal2_continuous_data.
+            autonomic_signal_df (pd.DataFrame): DataFrame of the continuous autonomic signal.
+            autonomic_signal_sfreq (float): Sampling frequency of the autonomic signal.
             signal1_name (str): Name for the first signal (e.g., "EEG").
-            signal2_name (str): Name for the second signal (e.g., "HRV", "EDA").
+            autonomic_signal_name (str): Name for the autonomic signal (e.g., "HRV", "EDA").
             participant_id (str): Participant ID.
+            reject_s2 (Optional[Dict]): MNE rejection criteria for the secondary (autonomic) signal. Defaults to None (no rejection).
 
         Returns:
-            pd.DataFrame: DataFrame with trial-wise PLV results.
+            Optional[pd.DataFrame]: DataFrame with trial-wise PLV results, or None on error.
         """
-        if signal1_epochs is None or not signal1_channels_to_average:
-            self.logger.warning(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): Signal 1 epochs or channels to average not provided for P:{participant_id}. Skipping PLV for {signal1_name}-{signal2_name}.")
-            return pd.DataFrame()
-        if signal2_continuous_data is None or signal2_sfreq is None:
-            self.logger.warning(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): Signal 2 continuous data or sfreq not provided for P:{participant_id}. Skipping PLV for {signal1_name}-{signal2_name}.")
-            return pd.DataFrame()
+        self.logger.info(f"ConnectivityAnalyzer: Starting trial-wise PLV for P:{participant_id} between {signal1_name} and {autonomic_signal_name}.")
 
-        self.logger.info(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): Starting trial-wise PLV for P:{participant_id} between {signal1_name} (channels: {signal1_channels_to_average}) and {signal2_name}.")
+        if signal1_epochs is None:
+            self.logger.error(f"ConnectivityAnalyzer (PLV): signal1_epochs object is None for P:{participant_id}. Aborting.")
+            return None
+
+        # --- Extract continuous autonomic data from DataFrame ---
+        if 'hrv_signal_ms' in autonomic_signal_df.columns:
+            signal2_continuous_data = autonomic_signal_df['hrv_signal_ms'].to_numpy()
+        elif 'EDA_Phasic' in autonomic_signal_df.columns:
+            signal2_continuous_data = autonomic_signal_df['EDA_Phasic'].to_numpy()
+        else:
+            self.logger.error(f"ConnectivityAnalyzer (PLV): Could not find a known data column ('hrv_signal_ms' or 'EDA_Phasic') in the autonomic signal DataFrame for {autonomic_signal_name}. Aborting.")
+            return None
 
         # --- Create a parallel MNE Epochs object for the continuous signal (signal2) ---
-        # 1. Wrap continuous data in an MNE Raw object
-        ch_name_s2 = [f"{signal2_name}_continuous"]
-        info_s2 = mne.create_info(ch_names=ch_name_s2, sfreq=signal2_sfreq, ch_types='misc')
+        ch_name_s2 = [f"{autonomic_signal_name}_continuous"]
+        info_s2 = mne.create_info(ch_names=ch_name_s2, sfreq=autonomic_signal_sfreq, ch_types='misc')
         raw_s2 = mne.io.RawArray(signal2_continuous_data.reshape(1, -1), info_s2, verbose=False)
 
         # 2. Adjust event sample timings to match signal2's sampling rate
         events_s1 = signal1_epochs.events
         events_s2 = events_s1.copy()
-        events_s2[:, 0] = np.round(events_s1[:, 0] * (signal2_sfreq / signal1_original_sfreq_for_event_timing)).astype(int)
+        events_s2[:, 0] = np.round(events_s1[:, 0] * (autonomic_signal_sfreq / signal1_epochs.info['sfreq'])).astype(int)
+
+        # --- Enhanced Diagnostic Logging ---
+        self.logger.debug(f"ConnectivityAnalyzer (PLV): Signal 2 total samples: {len(raw_s2.times)}. SFreq: {autonomic_signal_sfreq:.2f} Hz.")
+        self.logger.debug(f"ConnectivityAnalyzer (PLV): Epoch tmin={signal1_epochs.tmin:.2f}s, tmax={signal1_epochs.tmax:.2f}s.")
+        self.logger.debug(f"ConnectivityAnalyzer (PLV): Original EEG event samples: {events_s1[:, 0]}")
+        self.logger.debug(f"ConnectivityAnalyzer (PLV): Converted Signal 2 event samples: {events_s2[:, 0]}")
+        if len(events_s2) > 0 and np.max(events_s2[:, 0]) > len(raw_s2.times):
+            self.logger.warning("ConnectivityAnalyzer (PLV): At least one event sample is beyond the duration of the autonomic signal. Epochs may be dropped.")
 
         # 3. Create epochs from the continuous signal using the adjusted events
         try:
             signal2_epochs = mne.Epochs(raw_s2, events_s2, event_id=signal1_epochs.event_id,
-                                        tmin=signal1_epochs.tmin, tmax=signal1_epochs.tmax,
+                                        tmin=signal1_epochs.tmin, tmax=signal1_epochs.tmax, reject=reject_s2,
                                         baseline=None, preload=True, verbose=False)
+            # Defensive check to prevent crash if all epochs were dropped
+            if len(signal2_epochs) == 0:
+                self.logger.warning(f"ConnectivityAnalyzer (PLV): No valid epochs could be created for signal 2 ({autonomic_signal_name}). All event timings may have fallen outside the signal's duration. Skipping PLV for this signal.")
+                return None
         except ValueError as e:
-            self.logger.error(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): Error creating epochs for signal 2 for P:{participant_id}. This can happen if event timings fall outside the continuous signal duration. Error: {e}")
-            return pd.DataFrame()
+            self.logger.error(f"ConnectivityAnalyzer (PLV): Error creating epochs for signal 2 for P:{participant_id}. This can happen if event timings fall outside the continuous signal duration. Error: {e}")
+            return None
 
         # 4. Resample signal2_epochs to match signal1_epochs' sampling rate for perfect alignment
         all_trial_plv_results = []
@@ -231,8 +244,8 @@ class ConnectivityAnalyzer:
         # --- End of Epochs creation ---
 
         if not signal1_bands_config:
-            self.logger.warning(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): Signal 1 bands configuration is empty for P:{participant_id}. Skipping PLV calculation for {signal1_name}-{signal2_name}.")
-            return pd.DataFrame()
+            self.logger.warning(f"ConnectivityAnalyzer (PLV): Signal 1 bands configuration is empty for P:{participant_id}. Skipping PLV calculation.")
+            return None
 
         # Iterate through both sets of epochs simultaneously
         for i, (epoch_s1_data, epoch_s2_data) in enumerate(zip(signal1_epochs, signal2_epochs)):
@@ -247,16 +260,16 @@ class ConnectivityAnalyzer:
             try:
                 missing_channels = [ch for ch in signal1_channels_to_average if ch not in signal1_epochs.ch_names]
                 if missing_channels:
-                    self.logger.warning(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): Channels {missing_channels} not found in signal1_epochs for P:{participant_id}, trial {i}, cond {condition_name}. Skipping trial.")
+                    self.logger.warning(f"ConnectivityAnalyzer (PLV): Channels {missing_channels} not found in signal1_epochs for P:{participant_id}, trial {i}, cond {condition_name}. Skipping trial.")
                     continue
                 
                 channel_indices_for_avg = mne.pick_channels(signal1_epochs.ch_names, include=signal1_channels_to_average, ordered=True)
                 if len(channel_indices_for_avg) == 0:
-                    self.logger.warning(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): No channels selected from signal1_channels_to_average for P:{participant_id}, trial {i}, cond {condition_name}. Skipping.")
+                    self.logger.warning(f"ConnectivityAnalyzer (PLV): No channels selected from signal1_channels_to_average for P:{participant_id}, trial {i}, cond {condition_name}. Skipping.")
                     continue
                 signal1_trial_data_avg = current_epoch_data_s1[channel_indices_for_avg, :].mean(axis=0).ravel()
             except Exception as e_pick:
-                self.logger.error(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): Error picking channels for signal 1 in trial {i}, P:{participant_id}, cond {condition_name}: {e_pick}. Skipping.")
+                self.logger.error(f"ConnectivityAnalyzer (PLV): Error picking channels for signal 1 in trial {i}, P:{participant_id}, cond {condition_name}: {e_pick}. Skipping.")
                 continue
 
             # Get aligned data for signal 2 from its epochs object
@@ -292,11 +305,11 @@ class ConnectivityAnalyzer:
                         self.OUTPUT_COL_PARTICIPANT_ID: participant_id,
                         self.OUTPUT_COL_CONDITION: condition_name,
                         self.OUTPUT_COL_EPOCH_INDEX: i,
-                        self.OUTPUT_COL_TRIAL_ID_EPRIME: trial_identifier_eprime_str,
-                        self.OUTPUT_COL_MODALITY_PAIR: f"{signal1_name}-{signal2_name}",
+                        self.OUTPUT_COL_TRIAL_ID_EPRIME: trial_identifier_eprime_str, # This is now a string
+                        self.OUTPUT_COL_MODALITY_PAIR: f"{signal1_name}-{autonomic_signal_name}",
                         self.OUTPUT_COL_SIGNAL1_BAND: band_name,
                         self.OUTPUT_COL_PLV_VALUE: plv_val
                     })
 
-        self.logger.info(f"ConnectivityAnalyzer (Epoched vs Continuous PLV): PLV calculation for P:{participant_id} ({signal1_name}-{signal2_name}) completed. Found {len(all_trial_plv_results)} PLV values.")
+        self.logger.info(f"ConnectivityAnalyzer: PLV calculation for P:{participant_id} ({signal1_name}-{autonomic_signal_name}) completed. Found {len(all_trial_plv_results)} PLV values.")
         return pd.DataFrame(all_trial_plv_results)

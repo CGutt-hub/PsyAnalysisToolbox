@@ -6,7 +6,8 @@ import pandas as pd # Import pandas for type checking
 import os
 from matplotlib.figure import Figure # Import Figure directly
 from typing import Union, Any, Optional, List, Dict 
-import copy # For deepcopy
+import copy  # For deepcopy
+import inspect
 # import mne # For potential future topomaps
 
 class PlotReporter:
@@ -227,32 +228,50 @@ class PlotReporter:
                  call_args[arg_name] = None # Ensure it's None if mapping is invalid
                  continue # Skip extraction for this invalid entry
 
-            # Extract the actual key/column name from the mapping
-            key_to_extract = data_key_config.get("key") if isinstance(data_key_config, dict) else data_key_config
-            is_req = data_key_config.get("required", True) if isinstance(data_key_config, dict) else True
-            default_val = data_key_config.get("default") if isinstance(data_key_config, dict) else None
+            # --- Corrected Logic ---
+            # If the mapping is a dictionary, it's a request to extract a complex object from the payload.
+            if isinstance(data_key_config, dict):
+                key_to_extract = data_key_config.get("key")
+                is_req = data_key_config.get("required", True)
+                default_val = data_key_config.get("default")
+                call_args[arg_name] = self._extract_data(data_payload, key_to_extract, is_required=is_req, default=default_val)
+            else:
+                # If the mapping is a simple value (like a string for a column name), pass it directly.
+                # This is the correct behavior for seaborn plotters that expect column names.
+                call_args[arg_name] = data_key_config
 
-            # Perform the data extraction
-            call_args[arg_name] = self._extract_data(data_payload, key_to_extract, is_required=is_req, default=default_val)
+
+        # If a generator expects 'plot_data_df' and it wasn't mapped,
+        # but the main data_payload is a DataFrame, pass it as a fallback.
+        generator_params = inspect.signature(generator_func).parameters
+        if 'plot_data_df' in generator_params and 'plot_data_df' not in call_args:
+            if isinstance(data_payload, pd.DataFrame):
+                self.logger.info(f"Plot '{plot_type}': 'plot_data_df' not mapped. Passing the main data_payload DataFrame as a fallback.")
+                call_args['plot_data_df'] = data_payload
 
         # Check for critically missing required data before proceeding
         missing_required_args = []
         for arg_name, data_key_config in data_mapping.items():
-            is_req = data_key_config.get("required", True) if isinstance(data_key_config, dict) else True
-            if is_req and call_args.get(arg_name) is None:
-                key_or_col = data_key_config.get("key") if isinstance(data_key_config, dict) else data_key_config
+            # Only check for missing data if it was supposed to be extracted (i.e., a dict mapping)
+            if isinstance(data_key_config, dict):
+                is_req = data_key_config.get("required", True)
+                if is_req and call_args.get(arg_name) is None:
+                    key_or_col = data_key_config.get("key")
+                    missing_required_args.append(f"'{arg_name}' (expected from key/column: '{key_or_col}')")
+            elif call_args.get(arg_name) is None: # For simple mappings, just check if it's None
+                key_or_col = data_key_config
                 missing_required_args.append(f"'{arg_name}' (expected from key/column: '{key_or_col}')")
         
         if missing_required_args:
             self.logger.error(
-                f"Cannot generate plot '{plot_type}' for '{participant_id_or_group}' due to missing required data: "
+                f"Cannot generate plot '{plot_type}' for '{participant_id_or_group}' due to missing required data: " # type: ignore
                 f"{', '.join(missing_required_args)}. Check data_payload and data_mapping."
             )
             # Generate a placeholder plot indicating missing data
             placeholder_title = f"{plot_type.replace('_', ' ').title()} for {participant_id_or_group} (Missing Data)"
             placeholder_fig, ax_placeholder = plt.subplots(figsize=plot_params.get('figsize', self.DEFAULT_FIGSIZE))
             ax_placeholder.set_title(placeholder_title)
-            ax_placeholder.text(0.5, 0.5, f"Plot Generation Error:\nMissing Required Data\n({', '.join(missing_required_args)})", ha='center', va='center', fontsize=9, wrap=True)
+            ax_placeholder.text(0.5, 0.5, f"Plot Generation Error:\nMissing Required Data\n({', '.join(missing_required_args)})", ha='center', va='center', fontsize=9, wrap=True) # type: ignore
             placeholder_fig.tight_layout()
             self._save_plot(placeholder_fig, participant_id_or_group, f"{plot_type}_{participant_id_or_group}_missing_data".replace(" ", "_").lower(), plot_category_subdir, overwrite=True) # Always overwrite placeholders
             return
@@ -261,7 +280,8 @@ class PlotReporter:
         template_context = {"participant_id_or_group": participant_id_or_group, **plot_params, **{k: str(v)[:30] for k,v in call_args.items()}} # Add data keys for templating
         default_title_template = f"{plot_type.replace('_', ' ').title()} for {{participant_id_or_group}}" # Use double braces for literal braces in f-string
         
-        title_template_from_config = plot_params.get("title")
+        # Use pop() to retrieve the title template AND remove it from plot_params to avoid the TypeError
+        title_template_from_config = plot_params.pop("title", None)
         # Ensure title_template is a string before formatting
         actual_title_template = title_template_from_config if isinstance(title_template_from_config, str) else default_title_template
         final_title = actual_title_template.format(**template_context)
