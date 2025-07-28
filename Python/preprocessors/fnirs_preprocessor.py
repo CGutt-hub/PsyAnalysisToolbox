@@ -8,6 +8,24 @@ import logging
 from typing import Union, Optional, Tuple, List, Dict, Any # Added Dict for type hints
 
 class FNIRSPreprocessor:
+    """
+    Universal fNIRS preprocessing module for MNE Raw objects.
+    - Accepts a config dict with required and optional keys.
+    - Fills in missing keys with class-level defaults.
+    - Raises clear errors for missing required keys.
+    - Usable in any project (no project-specific assumptions).
+
+    Required config keys:
+        - 'beer_lambert_ppf': float or tuple of floats
+        - 'filter_band': tuple/list of (low, high) frequencies (e.g., (0.01, 0.1))
+    Optional config keys (with defaults):
+        - 'beer_lambert_remove_od': bool (default: True)
+        - 'filter_h_trans_bandwidth': str or float (default: 'auto')
+        - 'filter_l_trans_bandwidth': str or float (default: 'auto')
+        - 'filter_fir_design': str (default: 'firwin')
+        - 'short_channel_regression': bool (default: False)
+        - 'motion_correction_method': str (default: 'none')
+    """
     # Class-level defaults
     DEFAULT_BEER_LAMBERT_REMOVE_OD = True # Note: This specific flag is not directly used by MNE's core conversion functions in this sequence.
     DEFAULT_FILTER_H_TRANS_BANDWIDTH: Union[str, float] = 'auto'
@@ -18,32 +36,41 @@ class FNIRSPreprocessor:
         self.logger = logger
         self.logger.info("FNIRSPreprocessor initialized.")
 
-    def _validate_config(self, config: Dict[str, Any]) -> bool:
-        """Validates the provided fNIRS configuration dictionary."""
-        ppf_config = config.get('beer_lambert_ppf')
-        if ppf_config is None:
-            self.logger.error("FNIRSPreprocessor - 'beer_lambert_ppf' is required but not provided. Skipping.")
-            return False
-        if not (isinstance(ppf_config, (float, int)) or \
-                (isinstance(ppf_config, tuple) and len(ppf_config) == 2 and \
-                 all(isinstance(x, (float, int)) for x in ppf_config))):
-            self.logger.error(f"FNIRSPreprocessor - 'beer_lambert_ppf' must be a float or a tuple of two floats. Got {type(ppf_config)}. Skipping.")
-            return False
+    @staticmethod
+    def default_config():
+        """Return a default config dict for typical fNIRS preprocessing."""
+        return {
+            'beer_lambert_ppf': 6.0,
+            'filter_band': (0.01, 0.1),
+            'beer_lambert_remove_od': True,
+            'filter_h_trans_bandwidth': 'auto',
+            'filter_l_trans_bandwidth': 'auto',
+            'filter_fir_design': 'firwin',
+            'short_channel_regression': False,
+            'motion_correction_method': 'none'
+        }
 
-        filter_band = config.get('filter_band')
-        if not (isinstance(filter_band, (tuple, list)) and len(filter_band) == 2):
-            self.logger.error("FNIRSPreprocessor - 'filter_band' must be a tuple or list of two floats (low, high). Skipping.")
-            return False
-        return True
-
-    def _resolve_final_configs(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Resolves final configuration values, applying defaults for optional parameters."""
-        resolved = config.copy()
-        resolved.setdefault('beer_lambert_remove_od', self.DEFAULT_BEER_LAMBERT_REMOVE_OD)
-        resolved.setdefault('filter_h_trans_bandwidth', self.DEFAULT_FILTER_H_TRANS_BANDWIDTH)
-        resolved.setdefault('filter_l_trans_bandwidth', self.DEFAULT_FILTER_L_TRANS_BANDWIDTH)
-        resolved.setdefault('filter_fir_design', self.DEFAULT_FILTER_FIR_DESIGN)
-        return resolved
+    def _validate_and_resolve_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Validates and fills defaults for the fNIRS configuration. Returns None on validation failure."""
+        if not isinstance(config, dict):
+            cfg = dict(config)
+        else:
+            cfg = config.copy()
+        # Fill in missing optional keys with defaults
+        cfg.setdefault('beer_lambert_remove_od', self.DEFAULT_BEER_LAMBERT_REMOVE_OD)
+        cfg.setdefault('filter_h_trans_bandwidth', self.DEFAULT_FILTER_H_TRANS_BANDWIDTH)
+        cfg.setdefault('filter_l_trans_bandwidth', self.DEFAULT_FILTER_L_TRANS_BANDWIDTH)
+        cfg.setdefault('filter_fir_design', self.DEFAULT_FILTER_FIR_DESIGN)
+        cfg.setdefault('short_channel_regression', False)
+        cfg.setdefault('motion_correction_method', 'none')
+        # Required keys
+        if 'beer_lambert_ppf' not in cfg or not (isinstance(cfg['beer_lambert_ppf'], (float, int, tuple, list))):
+            self.logger.error("FNIRSPreprocessor - Missing or invalid required config key: 'beer_lambert_ppf'.")
+            return None
+        if 'filter_band' not in cfg or not (isinstance(cfg['filter_band'], (tuple, list)) and len(cfg['filter_band']) == 2):
+            self.logger.error("FNIRSPreprocessor - Missing or invalid required config key: 'filter_band'.")
+            return None
+        return cfg
 
     def _apply_beer_lambert(self, raw_intensity: mne.io.Raw, ppf: Union[float, Tuple[float, float]]) -> Optional[mne.io.Raw]:
         """Converts intensity data to optical density, then to haemoglobin concentration."""
@@ -127,10 +154,10 @@ class FNIRSPreprocessor:
             self.logger.warning("FNIRSPreprocessor - No raw fNIRS intensity data provided. Skipping.")
             return None
         
-        if not self._validate_config(config):
+        if not self._validate_and_resolve_config(config):
             return None
 
-        final_config = self._resolve_final_configs(config)
+        final_config = self._validate_and_resolve_config(config)
         self.logger.info(f"FNIRSPreprocessor - Starting fNIRS preprocessing with effective configs: {final_config}")
 
         try:

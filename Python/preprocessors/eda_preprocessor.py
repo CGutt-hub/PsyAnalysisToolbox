@@ -3,8 +3,20 @@ import pandas as pd
 import os
 import numpy as np
 import logging
-from typing import Optional, Tuple, Union, List, Any
+from typing import Optional, Tuple, Union, List, Any, Dict
 class EDAPreprocessor:
+    """
+    Universal EDA preprocessing module for phasic/tonic decomposition using NeuroKit2.
+    - Accepts a config dict with required and optional keys.
+    - Fills in missing keys with class-level defaults.
+    - Raises clear errors for missing required keys.
+    - Usable in any project (no project-specific assumptions).
+
+    Required config keys:
+        - 'eda_cleaning_method': str (e.g., 'neurokit', 'biosppy', etc.)
+    Optional config keys (with defaults):
+        - None currently, but can be extended.
+    """
     # Class-level defaults
     # Default parameters for the NeuroKit2 processing pipeline
     # This is the 'method' argument for nk.eda_process, which controls nk.eda_clean's method.
@@ -135,3 +147,22 @@ class EDAPreprocessor:
         except Exception as e:
             self.logger.error(f"EDAPreprocessor - Error processing EDA for {participant_id}: {e}", exc_info=True)
             return None
+
+    @staticmethod
+    def default_config():
+        """Return a default config dict for typical EDA preprocessing."""
+        return {
+            'eda_cleaning_method': EDAPreprocessor.DEFAULT_EDA_CLEANING_METHOD
+        }
+
+    def _validate_and_resolve_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Validates and fills defaults for the EDA configuration. Returns None on validation failure."""
+        if not isinstance(config, dict):
+            cfg = dict(config)
+        else:
+            cfg = config.copy()
+        # Required key
+        if 'eda_cleaning_method' not in cfg or not isinstance(cfg['eda_cleaning_method'], str):
+            self.logger.error("EDAPreprocessor - Missing or invalid required config key: 'eda_cleaning_method'.")
+            return None
+        return cfg

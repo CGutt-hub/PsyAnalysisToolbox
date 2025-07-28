@@ -6,7 +6,9 @@ import pandas as pd # Added for pd.DataFrame type hint
 
 class FDRCorrector:
     """
-    A class to apply statistical corrections.
+    FDR correction for multiple comparisons.
+    Input: DataFrame or array-like (p-values)
+    Output: DataFrame (corrected p-values)
     """
     DEFAULT_ALPHA = 0.05
 

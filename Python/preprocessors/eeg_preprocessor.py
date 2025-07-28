@@ -10,6 +10,29 @@ import warnings
 from typing import Optional, Tuple, List, Union, Dict, Any
 
 class EEGPreprocessor:
+    """
+    Universal EEG preprocessing module for MNE Raw/RawArray objects.
+    - Accepts a config dict with required and optional keys.
+    - Fills in missing keys with class-level defaults.
+    - Raises clear errors for missing required keys.
+    - Usable in any project (no project-specific assumptions).
+
+    Required config keys:
+        - 'eeg_filter_band': tuple/list of (low, high) frequencies (e.g., (1.0, 40.0))
+        - 'ica_n_components': int, float (0-1), or 'rank'
+        - 'ica_random_state': int or None
+        - 'ica_accept_labels': list of str (e.g., ['brain', 'other'])
+        - 'ica_reject_threshold': float (0.0-1.0)
+        - 'ica_method': str (e.g., 'fastica', 'infomax')
+        - 'ica_extended': bool
+    Optional config keys (with defaults):
+        - 'eeg_reference': str (default: 'average')
+        - 'eeg_reference_projection': bool (default: False)
+        - 'filter_fir_design': str (default: 'firwin')
+        - 'ica_max_iter': int or 'auto' (default: 'auto')
+        - 'resample_sfreq': float or None (default: None)
+        - 'ica_labeling_method': str (default: 'iclabel')
+    """
     # Class-level defaults
     DEFAULT_EEG_REFERENCE = 'average'
     DEFAULT_EEG_REFERENCE_PROJECTION = False # Changed to False to align with ICLabel recommendations
@@ -61,54 +84,79 @@ class EEGPreprocessor:
         except Exception as e:
             self.logger.error(f"EEGPreprocessor - Error while preparing onnxruntime as a fallback backend: {e}", exc_info=True)
 
+    @staticmethod
+    def default_config():
+        """Return a default config dict for typical EEG preprocessing."""
+        return {
+            'eeg_filter_band': (1.0, 40.0),
+            'ica_n_components': 30,
+            'ica_random_state': 42,
+            'ica_accept_labels': ['brain', 'Other'],
+            'ica_reject_threshold': 0.8,
+            'ica_method': 'infomax',
+            'ica_extended': True,
+            'eeg_reference': EEGPreprocessor.DEFAULT_EEG_REFERENCE,
+            'eeg_reference_projection': EEGPreprocessor.DEFAULT_EEG_REFERENCE_PROJECTION,
+            'filter_fir_design': EEGPreprocessor.DEFAULT_FILTER_FIR_DESIGN,
+            'ica_max_iter': EEGPreprocessor.DEFAULT_ICA_MAX_ITER,
+            'resample_sfreq': EEGPreprocessor.DEFAULT_RESAMPLE_SFREQ,
+            'ica_labeling_method': EEGPreprocessor.DEFAULT_ICA_LABELING_METHOD
+        }
+
     def _validate_and_resolve_config(self, eeg_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Validates, converts, and sets defaults for the EEG configuration. Returns None on validation failure."""
-        cfg = eeg_config.copy()
-
-        # --- Validate and resolve critical parameters ---
-        # eeg_filter_band
+        # Accept any dict-like config, fill in missing keys with defaults
+        if not isinstance(eeg_config, dict):
+            cfg = dict(eeg_config)
+        else:
+            cfg = eeg_config.copy()
+        # Fill in missing optional keys with defaults
+        cfg.setdefault('eeg_reference', self.DEFAULT_EEG_REFERENCE)
+        cfg.setdefault('eeg_reference_projection', self.DEFAULT_EEG_REFERENCE_PROJECTION)
+        cfg.setdefault('filter_fir_design', self.DEFAULT_FILTER_FIR_DESIGN)
+        cfg.setdefault('ica_labeling_method', self.DEFAULT_ICA_LABELING_METHOD)
+        cfg.setdefault('resample_sfreq', self.DEFAULT_RESAMPLE_SFREQ)
+        cfg.setdefault('ica_max_iter', self.DEFAULT_ICA_MAX_ITER)
+        # --- Validate required parameters ---
+        required_keys = ['eeg_filter_band', 'ica_n_components', 'ica_random_state', 'ica_accept_labels', 'ica_reject_threshold', 'ica_method', 'ica_extended']
+        for key in required_keys:
+            if key not in cfg or cfg[key] is None:
+                self.logger.error(f"EEGPreprocessor - Missing required config key: '{key}'.")
+                return None
+        # Validate eeg_filter_band
         band = cfg.get('eeg_filter_band')
         if not isinstance(band, (list, tuple)) or len(band) != 2 or not all(isinstance(x, (int, float, type(None))) for x in band) or (band[0] is None and band[1] is None):
             self.logger.error(f"Invalid 'eeg_filter_band': {band}. Must be a tuple of two numbers (e.g., [1.0, 40.0]).")
             return None
-
-        # ica_n_components
+        # Validate ica_n_components
         n_comp = cfg.get('ica_n_components')
         if not (n_comp is None or (isinstance(n_comp, int) and n_comp > 0) or (isinstance(n_comp, float) and 0 < n_comp <= 1.0) or (isinstance(n_comp, str) and n_comp == self._ICA_N_COMPONENTS_RANK)):
             self.logger.error(f"Invalid 'ica_n_components': {n_comp}. Must be a positive int, a float (0-1), or 'rank'.")
             return None
-
-        # ica_random_state
+        # Validate ica_random_state
         if not (cfg.get('ica_random_state') is None or isinstance(cfg.get('ica_random_state'), int)):
             self.logger.error(f"Invalid 'ica_random_state': {cfg.get('ica_random_state')}. Must be an integer.")
             return None
-
-        # ica_accept_labels
+        # Validate ica_accept_labels
         accept_labels = cfg.get('ica_accept_labels', [])
         if not isinstance(accept_labels, list) or not all(isinstance(label, str) for label in accept_labels):
             self.logger.error(f"Invalid 'ica_accept_labels': {accept_labels}. Must be a list of strings.")
             return None
-
-        # ica_reject_threshold
+        # Validate ica_reject_threshold
         reject_thresh = cfg.get('ica_reject_threshold')
         if not isinstance(reject_thresh, (int, float)) or not (0.0 <= reject_thresh <= 1.0):
             self.logger.error(f"Invalid 'ica_reject_threshold': {reject_thresh}. Must be a number between 0.0 and 1.0.")
             return None
-
-        # --- Resolve optional parameters with defaults ---
-        cfg['eeg_reference'] = cfg.get('eeg_reference') or self.DEFAULT_EEG_REFERENCE
-        cfg['eeg_reference_projection'] = cfg.get('eeg_reference_projection', self.DEFAULT_EEG_REFERENCE_PROJECTION)
-        cfg['filter_fir_design'] = cfg.get('filter_fir_design') or self.DEFAULT_FILTER_FIR_DESIGN
-        cfg['ica_labeling_method'] = cfg.get('ica_labeling_method') or self.DEFAULT_ICA_LABELING_METHOD
-
-        # Resolve resample_sfreq
-        sfreq = cfg.get('resample_sfreq')
-        if isinstance(sfreq, (int, float)) and sfreq > 0:
-            cfg['resample_sfreq'] = float(sfreq)
-        else:
-            cfg['resample_sfreq'] = self.DEFAULT_RESAMPLE_SFREQ
-
-        # Resolve ica_max_iter (handles string-to-int conversion)
+        # Validate ica_method
+        if not isinstance(cfg.get('ica_method'), str):
+            self.logger.error(f"Invalid 'ica_method': {cfg.get('ica_method')}. Must be a string.")
+            return None
+        # Validate ica_extended
+        if not isinstance(cfg.get('ica_extended'), bool):
+            self.logger.error(f"Invalid 'ica_extended': {cfg.get('ica_extended')}. Must be a boolean.")
+            return None
+        # Validate optional parameters (if present)
+        # ica_max_iter
         max_iter = cfg.get('ica_max_iter')
         if isinstance(max_iter, str):
             if max_iter.isdigit():
@@ -117,9 +165,12 @@ class EEGPreprocessor:
                 cfg['ica_max_iter'] = self._ICA_MAX_ITER_AUTO
             else:
                 cfg['ica_max_iter'] = self.DEFAULT_ICA_MAX_ITER
-        elif not isinstance(max_iter, int):
+        elif not isinstance(max_iter, int) and max_iter is not self._ICA_MAX_ITER_AUTO:
             cfg['ica_max_iter'] = self.DEFAULT_ICA_MAX_ITER
-
+        # resample_sfreq
+        sfreq = cfg.get('resample_sfreq')
+        if sfreq is not None and (not isinstance(sfreq, (int, float)) or sfreq <= 0):
+            cfg['resample_sfreq'] = self.DEFAULT_RESAMPLE_SFREQ
         return cfg
 
     def process(self, raw_eeg: Union[mne.io.Raw, mne.io.RawArray], eeg_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -166,13 +217,15 @@ class EEGPreprocessor:
             return None
 
         # Step 1.3: Data integrity check. Ensure data is loaded and contains no NaNs/Infs.
+        if isinstance(raw_eeg, pd.DataFrame):
+            self.logger.error("EEGPreprocessor - Received a pandas DataFrame instead of an MNE Raw object. Please convert your EEG data to an MNE Raw or RawArray before preprocessing.")
+            return None
         if hasattr(raw_eeg, '_data') and raw_eeg._data is None and raw_eeg.preload is False:
             try:
                 raw_eeg.load_data(verbose=False)
             except Exception as e_load:
                 self.logger.error(f"EEGPreprocessor - Failed to load data for integrity check: {e_load}", exc_info=True)
                 return None
-
         raw_data = raw_eeg.get_data()
         if np.any(np.isnan(raw_data)) or np.any(np.isinf(raw_data)):
             self.logger.error("EEGPreprocessor - Raw EEG data contains NaN or Inf values. This can cause unpredictable errors in filtering or ICA. Aborting preprocessing for this participant.")
@@ -187,6 +240,11 @@ class EEGPreprocessor:
                          f"ICA Components={final_config['ica_n_components']}, ICA MaxIter='{final_config['ica_max_iter']}', "
                          f"ICA LabelMethod='{final_config['ica_labeling_method']}', ICA AcceptLabels={final_config['ica_accept_labels']}, "
                          f"ICA RejectThreshold={final_config['ica_reject_threshold']}.")
+
+        # --- PATCH: Ensure filter_fir_design is always a string ---
+        if final_config.get('filter_fir_design', None) is None:
+            self.logger.warning("EEGPreprocessor - 'filter_fir_design' was None or missing. Defaulting to 'firwin'.")
+            final_config['filter_fir_design'] = self.DEFAULT_FILTER_FIR_DESIGN
 
         try:
             # --- 3. Preprocessing Steps ---
@@ -204,7 +262,7 @@ class EEGPreprocessor:
                     warnings.filterwarnings('ignore', message='The unit for channel')
                     if stim_ch_names:
                         raw_eeg.set_channel_types({ch: 'misc' for ch in stim_ch_names})
-                    raw_eeg.resample(sfreq=final_config['resample_sfreq'], verbose=False)
+                    raw_eeg.resample(sfreq=final_config['resample_sfreq'], n_jobs=-1, verbose=False)
                     if stim_ch_names:
                         raw_eeg.set_channel_types({ch: 'stim' for ch in stim_ch_names}) # Restore type
 

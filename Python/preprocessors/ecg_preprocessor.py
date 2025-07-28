@@ -3,9 +3,21 @@ import numpy as np
 import pandas as pd
 import neurokit2 as nk # For ECG analysis functions
 import logging
-from typing import Tuple, Optional, Union # Added for more specific return type hinting
+from typing import Tuple, Optional, Union, Dict, Any # Added for more specific return type hinting
 
 class ECGPreprocessor:
+    """
+    Universal ECG preprocessing module for R-peak detection using NeuroKit2.
+    - Accepts a config dict with required and optional keys.
+    - Fills in missing keys with class-level defaults.
+    - Raises clear errors for missing required keys.
+    - Usable in any project (no project-specific assumptions).
+
+    Required config keys:
+        - 'ecg_rpeak_method': str (e.g., 'neurokit', 'pantompkins1985', etc.)
+    Optional config keys (with defaults):
+        - None currently, but can be extended.
+    """
     # Class-level defaults
     DEFAULT_RPEAK_DETECTION_METHOD = "neurokit" # Default for nk.ecg_peaks
     DEFAULT_RPEAK_FILENAME_SUFFIX = "_ecg_rpeak_times.csv"
@@ -14,6 +26,26 @@ class ECGPreprocessor:
     def __init__(self, logger: logging.Logger):
         self.logger = logger
         self.logger.info("ECGPreprocessor initialized.")
+
+    @staticmethod
+    def default_config():
+        """Return a default config dict for typical ECG preprocessing."""
+        return {
+            'ecg_rpeak_method': ECGPreprocessor.DEFAULT_RPEAK_DETECTION_METHOD
+        }
+
+    def _validate_and_resolve_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Validates and fills defaults for the ECG configuration. Returns None on validation failure."""
+        if not isinstance(config, dict):
+            cfg = dict(config)
+        else:
+            cfg = config.copy()
+        # Required key
+        if 'ecg_rpeak_method' not in cfg or not isinstance(cfg['ecg_rpeak_method'], str):
+            self.logger.error("ECGPreprocessor - Missing or invalid required config key: 'ecg_rpeak_method'.")
+            return None
+        return cfg
+
     def preprocess_ecg(self,
                          ecg_signal: Union[np.ndarray, pd.Series],
                          ecg_sfreq: float,

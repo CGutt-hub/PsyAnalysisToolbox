@@ -102,6 +102,10 @@ class QuestionnaireScaleProcessor:
             scale_scores = df_items.groupby(group_cols).apply(score_group)
             scale_scores.name = scale_name
             scores_df = pd.concat([scores_df, scale_scores], axis=1)
-        scores_df.reset_index(inplace=True)
+        # At the end, before returning, patch reset_index to avoid duplicate participant_id
+        if 'participant_id' in scores_df.columns:
+            scores_df.reset_index(drop=True, inplace=True)
+        else:
+            scores_df.reset_index(inplace=True)
         self.logger.info("QuestionnaireScaleProcessor - Universal scale scoring completed.")
         return scores_df

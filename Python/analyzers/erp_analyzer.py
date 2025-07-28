@@ -6,7 +6,9 @@ from typing import Dict, List, Optional, Any, Tuple
 
 class ERPAnalyzer:
     """
-    Analyzes Event-Related Potentials (ERPs) from epoched EEG data.
+    Analyzer for Event-Related Potentials (ERP).
+    Input: DataFrame (epochs/averages)
+    Output: DataFrame
     """
     DEFAULT_FEATURE_MEASURES = ['peak_amplitude', 'mean_amplitude', 'peak_latency']
 
@@ -203,6 +205,8 @@ class ERPAnalyzer:
         Reconstructs MNE Epochs from a DataFrame and returns averaged Evoked objects.
 
         Args:
+            epochs_df (pd.DataFrame): DataFrame with columns ['epoch_id', 'condition', 'channel', 'time', 'value'].
+            sfreq (float): The sampling frequency of the data.
             See `calculate_component_features_from_df` for an explanation of the arguments.
 
         Returns:

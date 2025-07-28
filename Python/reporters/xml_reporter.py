@@ -4,28 +4,19 @@ import os
 import logging
 
 class XMLReporter:
+    """
+    Reporter for saving DataFrames to XML files.
+    Input: DataFrame (data_df)
+    Output: XML file (side effect)
+    """
     def __init__(self, logger: logging.Logger):
         self.logger = logger
         self.logger.info("XMLReporter initialized.")
 
-    def save_dataframe(self,
-                       data_df: pd.DataFrame,
-                       output_dir: str,
-                       filename: str,
-                       **kwargs: Any) -> Optional[str]:
-        """
-        Saves a pandas DataFrame to an XML file.
-
-        Args:
-            data_df (pd.DataFrame): The DataFrame to save.
-            output_dir (str): The directory where the file will be saved.
-            filename (str): The name of the output file (should end with .xml).
-            **kwargs: Additional keyword arguments to pass to pandas.DataFrame.to_xml().
-                      (e.g., index=False, root_name='data', row_name='row')
-
-        Returns:
-            Optional[str]: The full path to the saved file, or None if saving fails.
-        """
+    def save_dataframe(self, data_df, output_dir, filename, **kwargs):
+        if not isinstance(data_df, pd.DataFrame):
+            self.logger.error('XMLReporter: data_df must be a DataFrame.')
+            return None
         if not filename.lower().endswith('.xml'):
             self.logger.warning(f"Filename '{filename}' does not end with .xml. Appending .xml extension.")
             filename += '.xml'

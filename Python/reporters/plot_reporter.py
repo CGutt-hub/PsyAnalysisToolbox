@@ -11,6 +11,11 @@ import inspect
 # import mne # For potential future topomaps
 
 class PlotReporter:
+    """
+    Reporter for generating plots from DataFrames.
+    Input: DataFrame (data_payload)
+    Output: plot files (side effect)
+    """
     # Class-level defaults
     DEFAULT_FIG_FORMAT = "png"
     DEFAULT_DPI = 100
@@ -195,6 +200,10 @@ class PlotReporter:
         """
         Generates and saves a plot based on the provided configuration and data.
         """
+        if not isinstance(data_payload, pd.DataFrame):
+            self.logger.error('PlotReporter: data_payload must be a DataFrame.')
+            return None
+
         plot_type = plot_config.get("plot_type")
         if not plot_type:
             self.logger.error("generate_plot: 'plot_type' missing in plot_config.")

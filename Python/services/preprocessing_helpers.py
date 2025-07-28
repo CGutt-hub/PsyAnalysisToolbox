@@ -35,8 +35,8 @@ def _preprocess_eeg_stream(config, components, p_logger, streams, pid, output_di
                 p_logger.warning(f"Could not generate diagnostic plot for raw FAI channels: {plot_e}")
         eeg_processing_config = {
             'eeg_filter_band': (
-                config.getfloat('EEG', 'eeg_filter_l_freq', fallback=None),
-                config.getfloat('EEG', 'eeg_filter_h_freq', fallback=None)
+                config.getfloat('EEG', 'eeg_filter_l_freq', fallback=1.0),
+                config.getfloat('EEG', 'eeg_filter_h_freq', fallback=40.0)
             ),
             'ica_n_components': config.get('EEG', 'ica_n_components'),
             'ica_random_state': config.getint('EEG', 'ica_random_state', fallback=None),

@@ -5,6 +5,11 @@ from scipy.interpolate import interp1d
 from typing import Tuple, Optional, Dict, Any
 
 class ECGHRVProcessor:
+    """
+    Processor for HRV from ECG R-peaks.
+    Input: numpy array or DataFrame (R-peak samples)
+    Output: DataFrame (HRV time series)
+    """
     # Default parameters for HRV processing
     DEFAULT_TARGET_SFREQ_CONTINUOUS_HRV = 4.0 # Hz
 
@@ -34,6 +39,9 @@ class ECGHRVProcessor:
             A dictionary containing HRV artifacts (e.g., 'hrv_nn_intervals_df',
             'hrv_continuous_df', 'hrv_rmssd_ms'), or None if a critical error occurs.
         """
+        if not isinstance(rpeaks_samples, (np.ndarray, pd.Series, list)):
+            self.logger.error('ECGHRVProcessor: rpeaks_samples must be a numpy array, Series, or list.')
+            return None
         if rpeaks_samples is None or len(rpeaks_samples) < 2:
             self.logger.warning(f"ECGHRVProcessor - P:{participant_id}: Not enough R-peaks ({len(rpeaks_samples) if rpeaks_samples is not None else 0}) provided. Skipping HRV processing.")
             return None

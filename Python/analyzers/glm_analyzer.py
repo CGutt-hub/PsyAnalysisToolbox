@@ -5,6 +5,11 @@ import numpy as np # Added for np.isnan
 from typing import Dict, List, Optional, Union # For type hinting
 
 class GLMAnalyzer:
+    """
+    Analyzer for General Linear Model (GLM) for fNIRS/EEG.
+    Input: MNE Raw (main), DataFrame (for helper methods)
+    Output: DataFrame
+    """
     # Class-level default parameters for GLM
     DEFAULT_GLM_NOISE_MODEL = "ar1"
 
@@ -61,7 +66,7 @@ class GLMAnalyzer:
                                     participant_id: str,
                                     contrasts_config: Dict[str, Dict[str, float]],
                                     **kwargs) -> Optional[pd.DataFrame]:
-        """pd.DataFrame,  Dict[str, RegressionResults]
+        """
         Runs a first-level GLM from a DataFrame and returns a DataFrame of contrast results.
 
         Args:

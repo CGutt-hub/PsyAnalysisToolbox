@@ -3,6 +3,11 @@ import pandas as pd
 from typing import Dict, List, Tuple, Optional
 
 class FAIAnalyzer:
+    """
+    Analyzer for Frontal Alpha Asymmetry Index (FAI).
+    Input: DataFrame (PSD results)
+    Output: DataFrame
+    """
     # Default parameters for FAI calculation
     DEFAULT_MIN_POWER_THRESHOLD = 1e-12
 
@@ -30,8 +35,12 @@ class FAIAnalyzer:
             Optional[pd.DataFrame]: DataFrame with FAI results in long format
                                     ['condition', 'pair_name', 'fai_value'], or None on error.
         """
+        if not isinstance(psd_df, pd.DataFrame):
+            self.logger.error('FAIAnalyzer: Input psd_df must be a DataFrame.')
+            return None
+
         required_cols = ['condition', 'band', 'channel', 'power']
-        if not isinstance(psd_df, pd.DataFrame) or not all(col in psd_df.columns for col in required_cols):
+        if not all(col in psd_df.columns for col in required_cols):
             self.logger.error(f"FAIAnalyzer: Input psd_df must be a DataFrame with columns {required_cols}.")
             return None
 
@@ -88,7 +97,14 @@ class FAIAnalyzer:
             return pd.DataFrame()
 
         final_fai_df = pd.concat(all_fai_results, ignore_index=True)
-        return final_fai_df[['condition', 'pair_name', 'fai_value']] # Ensure column order
+        result = final_fai_df[['condition', 'pair_name', 'fai_value']] # Ensure column order
+        if isinstance(result, pd.Series):
+            self.logger.error('FAIAnalyzer: Output is a Series, not a DataFrame. Returning None.')
+            return None
+        if not isinstance(result, pd.DataFrame):
+            self.logger.error('FAIAnalyzer: Output is not a DataFrame. Returning None.')
+            return None
+        return result
 
     def compute_fai_from_psd(self,
                              psd_results_all_bands: Dict[str, Dict[str, Dict[str, float]]],

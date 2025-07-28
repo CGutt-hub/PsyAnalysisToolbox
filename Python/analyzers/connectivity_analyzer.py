@@ -16,7 +16,9 @@ def _calculate_plv_segment(phase_sig1: np.ndarray, phase_sig2: np.ndarray, logge
 
 class ConnectivityAnalyzer:
     """
-    Computes EEG-EEG functional connectivity measures.
+    Analyzer for connectivity metrics (e.g., PLV).
+    Input: MNE Epochs (for compute_plv), DataFrame (for summary/export)
+    Output: DataFrame
     """
     DEFAULT_CONN_MODE = 'multitaper'
     DEFAULT_FAVERAGE = True
@@ -35,13 +37,29 @@ class ConnectivityAnalyzer:
         self.logger = logger
         self.logger.info("ConnectivityAnalyzer initialized.")
 
+    @staticmethod
+    def default_config():
+        """Return a default config dict for typical connectivity analysis."""
+        return {
+            'conn_mode': ConnectivityAnalyzer.DEFAULT_CONN_MODE,
+            'faverage': ConnectivityAnalyzer.DEFAULT_FAVERAGE
+        }
+
+    def _validate_and_resolve_config(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validates and fills defaults for the connectivity config."""
+        cfg = dict(config) if config is not None else {}
+        if 'conn_mode' not in cfg:
+            cfg['conn_mode'] = self.DEFAULT_CONN_MODE
+        if 'faverage' not in cfg:
+            cfg['faverage'] = self.DEFAULT_FAVERAGE
+        return cfg
+
     def calculate_spectral_connectivity_epochs(self,
                                                epochs: mne.Epochs,
                                                method: Union[str, List[str]],
-                                               mode: str = DEFAULT_CONN_MODE,
+                                               config: Optional[Dict[str, Any]] = None,
                                                fmin: Optional[Union[float, Tuple[float, ...]]] = None,
                                                fmax: Optional[Union[float, Tuple[float, ...]]] = None,
-                                               faverage: bool = DEFAULT_FAVERAGE,
                                                tmin: Optional[float] = None,
                                                tmax: Optional[float] = None,
                                                mt_bandwidth: Optional[float] = None,
@@ -56,7 +74,7 @@ class ConnectivityAnalyzer:
         Args:
             epochs (mne.Epochs): Epoched EEG data.
             method (Union[str, List[str]]): Connectivity measure(s) to compute (e.g., 'coh', 'cohy', 'imcoh', 'plv', 'ciplv', 'ppc', 'pli', 'wpli', 'wpli2_debiased').
-            mode (str): Spectrum estimation mode, e.g., 'multitaper', 'fourier', 'cwt_morlet'.
+            config (dict): Optional config dict for mode/faverage.
             fmin (Optional[Union[float, Tuple[float, ...]]]): Lower frequency or frequencies of interest.
             fmax (Optional[Union[float, Tuple[float, ...]]]): Upper frequency or frequencies of interest.
             faverage (bool): Average over frequencies.
@@ -72,6 +90,13 @@ class ConnectivityAnalyzer:
             Optional[Union[mne.connectivity.SpectralConnectivity, List[mne.connectivity.SpectralConnectivity]]]:
             The MNE SpectralConnectivity object(s), or None on error.
         """
+        if not isinstance(epochs, mne.Epochs):
+            self.logger.error("ConnectivityAnalyzer: 'epochs' must be an mne.Epochs object.")
+            return None
+        resolved_config = self._validate_and_resolve_config(config)
+        mode = resolved_config['conn_mode']
+        faverage = resolved_config['faverage']
+
         if epochs is None:
             self.logger.error("ConnectivityAnalyzer: Epochs object is None. Cannot calculate connectivity.")
             return None
@@ -90,7 +115,7 @@ class ConnectivityAnalyzer:
         else:
             actual_picks_for_conn = mne.pick_types(epochs.info, eeg=True) # type: ignore[reportArgumentType] # Pick all EEG channels if no specific picks
 
-        if actual_picks_for_conn is None or actual_picks_for_conn.size == 0:
+        if actual_picks_for_conn is None or (hasattr(actual_picks_for_conn, 'size') and actual_picks_for_conn.size == 0):
             self.logger.error("ConnectivityAnalyzer: No EEG channels found or selected. Cannot calculate connectivity.")
             return None
 
@@ -129,6 +154,9 @@ class ConnectivityAnalyzer:
       Returns:
           pd.DataFrame: DataFrame with connectivity data.
       """
+      if connectivity_result is None:
+          self.logger.error("ConnectivityAnalyzer: connectivity_result is None. Cannot extract data.")
+          return pd.DataFrame()
       all_conn_data = []
 
       if isinstance(connectivity_result, list):  # Multiple methods
@@ -173,24 +201,21 @@ class ConnectivityAnalyzer:
                                             autonomic_signal_name: str, participant_id: str,
                                             reject_s2: Optional[Dict] = None
                                             ) -> Optional[pd.DataFrame]:
-        """
-        Calculates trial-wise PLV between an epoched signal (averaged over channels and filtered into bands)
-        and a continuous signal.
-
-        Args:
-            signal1_epochs (mne.Epochs): Epoched data for the first signal (e.g., EEG).
-            signal1_channels_to_average (list): List of channel names from signal1_epochs to average.
-            signal1_bands_config (dict): Dictionary mapping band names to (fmin, fmax) for signal1.
-            autonomic_signal_df (pd.DataFrame): DataFrame of the continuous autonomic signal.
-            autonomic_signal_sfreq (float): Sampling frequency of the autonomic signal.
-            signal1_name (str): Name for the first signal (e.g., "EEG").
-            autonomic_signal_name (str): Name for the autonomic signal (e.g., "HRV", "EDA").
-            participant_id (str): Participant ID.
-            reject_s2 (Optional[Dict]): MNE rejection criteria for the secondary (autonomic) signal. Defaults to None (no rejection).
-
-        Returns:
-            Optional[pd.DataFrame]: DataFrame with trial-wise PLV results, or None on error.
-        """
+        if not hasattr(signal1_epochs, 'get_data'):
+            self.logger.error('ConnectivityAnalyzer: signal1_epochs must be an MNE Epochs object.')
+            return None
+        if not isinstance(autonomic_signal_df, pd.DataFrame):
+            self.logger.error('ConnectivityAnalyzer: autonomic_signal_df must be a DataFrame.')
+            return None
+        if not isinstance(signal1_channels_to_average, list) or not all(isinstance(ch, str) for ch in signal1_channels_to_average):
+            self.logger.error("ConnectivityAnalyzer: 'signal1_channels_to_average' must be a list of strings.")
+            return None
+        if not isinstance(signal1_bands_config, dict):
+            self.logger.error("ConnectivityAnalyzer: 'signal1_bands_config' must be a dict.")
+            return None
+        if not isinstance(autonomic_signal_sfreq, (int, float)) or autonomic_signal_sfreq <= 0:
+            self.logger.error("ConnectivityAnalyzer: 'autonomic_signal_sfreq' must be a positive number.")
+            return None
         self.logger.info(f"ConnectivityAnalyzer: Starting trial-wise PLV for P:{participant_id} between {signal1_name} and {autonomic_signal_name}.")
 
         if signal1_epochs is None:

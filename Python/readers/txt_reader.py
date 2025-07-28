@@ -163,7 +163,18 @@ class TXTReader:
                 return pd.DataFrame()
 
             df = pd.DataFrame(parsed_responses)
-            self.logger.info(f"Successfully extracted {len(df)} questionnaire responses from {file_path}.")
+            # --- PATCH: Add E-Prime-style columns for long-format compatibility ---
+            # Only for BIS/BAS items (procedure == bisbasproc)
+            if not df.empty and 'questionnaire_type' in df.columns and 'item_id' in df.columns and 'response_value' in df.columns:
+                # Only select BIS/BAS items
+                bisbas_mask = df['questionnaire_type'] == 'BISBAS'
+                # Create E-Prime-style columns for those rows
+                df.loc[bisbas_mask, 'Subject'] = df.loc[bisbas_mask, 'participant_id']
+                # Extract the bisBasList number from item_id (e.g., 'bis16' -> '16')
+                import re
+                df.loc[bisbas_mask, 'bisBasList'] = df.loc[bisbas_mask, 'item_id'].str.extract(r'bis(\d+)', expand=False)
+                df.loc[bisbas_mask, 'bisBas.Choice1.Value'] = df.loc[bisbas_mask, 'response_value']
+            self.logger.info(f"Successfully extracted {len(df)} questionnaire responses from {file_path}. Columns: {list(df.columns)}")
             return df
         except Exception as e:
             self.logger.error(f"TXTReader - Error parsing E-Prime log file {file_path}: {e}", exc_info=True)

@@ -2,6 +2,10 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from typing import Callable, List, Any
+import pandas as pd
+import numpy as np
+from PsyAnalysisToolbox.Python.utils.data_conversion import _create_eeg_mne_raw_from_df, _create_fnirs_mne_raw_from_df
+import mne
 
 # Module-level default for ParallelTaskRunner
 PARALLEL_TASK_RUNNER_DEFAULT_MAX_WORKERS: int = os.cpu_count() or 1 # Default to number of CPUs, or 1 if undetectable
@@ -157,3 +161,164 @@ class DAGParallelTaskRunner:
                     self.completed.add(name)
                     break  # Go back to check for new ready tasks
         return self.results
+
+def dispatch_preprocessing_task(task):
+    """
+    Universal worker for physiological preprocessing tasks (EEG, ECG/HRV, EDA, fNIRS).
+    Accepts a task dict with keys: 'modality', 'preprocessor', 'data', 'config', 'logger', 'artifacts'.
+    Calls the appropriate preprocessor and updates artifacts.
+    """
+    modality = task['modality']
+    preprocessor = task['preprocessor']
+    data = task['data']
+    config = task['config']
+    logger = task['logger']
+    artifacts = task['artifacts']
+    try:
+        logger.info(f"Preprocessing {modality} data...")
+        if modality == 'eeg':
+            if not isinstance(data, mne.io.BaseRaw):
+                logger.error("EEG data is not an MNE Raw object. Skipping EEG preprocessing.")
+                return {'modality': modality, 'result': None}
+            from preprocessors.eeg_preprocessor import EEGPreprocessor
+            eeg_config = EEGPreprocessor.default_config()
+            if hasattr(config, 'get'):
+                eeg_config['eeg_filter_band'] = (
+                    config.getfloat('EEG', 'eeg_filter_l_freq', fallback=1.0),
+                    config.getfloat('EEG', 'eeg_filter_h_freq', fallback=40.0)
+                )
+                ica_n = config.get('EEG', 'ica_n_components', fallback=eeg_config['ica_n_components'])
+                if isinstance(ica_n, str):
+                    if ica_n.isdigit():
+                        ica_n = int(ica_n)
+                    elif ica_n == 'rank':
+                        pass  # keep as string
+                    else:
+                        try:
+                            ica_n = float(ica_n)
+                        except ValueError:
+                            pass  # leave as string, will fail validation if not valid
+                eeg_config['ica_n_components'] = ica_n
+                eeg_config['ica_random_state'] = config.getint('EEG', 'ica_random_state', fallback=eeg_config['ica_random_state'])
+                eeg_config['ica_reject_threshold'] = config.getfloat('EEG', 'ica_reject_threshold', fallback=eeg_config['ica_reject_threshold'])
+                eeg_config['ica_method'] = config.get('EEG', 'ica_method', fallback=eeg_config['ica_method'])
+                eeg_config['ica_extended'] = config.getboolean('EEG', 'ica_extended', fallback=eeg_config['ica_extended'])
+                # Add more keys as needed
+            logger.info(f"EEG config for preprocessing: {eeg_config}")
+            return preprocessor.process(data, eeg_config)
+        elif modality == 'ecg':
+            # Expect data to be a DataFrame with 'ecg_signal', 'time_sec', etc.
+            if isinstance(data, pd.DataFrame) and 'ecg_signal' in data.columns and 'time_sec' in data.columns:
+                ecg_signal = data['ecg_signal']
+                # Estimate sampling frequency from 'time_sec'
+                time_sec = data['time_sec']
+                if len(time_sec) > 1:
+                    ecg_sfreq = 1 / np.mean(np.diff(time_sec))
+                else:
+                    logger.error("ECG data has insufficient time points to estimate sampling frequency.")
+                    return { 'modality': modality, 'result': None }
+                participant_id = artifacts.get('participant_id', 'unknown')
+                output_dir = artifacts.get('output_dir', '.')
+                result = preprocessor.preprocess_ecg(ecg_signal, ecg_sfreq, participant_id, output_dir, config.get('ECG', 'ecg_rpeak_method', fallback=None))
+            else:
+                logger.error("ECG data is not a DataFrame with required columns.")
+                result = None
+            return { 'modality': modality, 'result': result }
+        elif modality == 'eda':
+            if isinstance(data, pd.DataFrame) and 'eda_signal' in data.columns and 'time_sec' in data.columns:
+                eda_signal = data['eda_signal']
+                time_sec = data['time_sec']
+                if len(time_sec) > 1:
+                    eda_sfreq = 1 / np.mean(np.diff(time_sec))
+                else:
+                    logger.error("EDA data has insufficient time points to estimate sampling frequency.")
+                    return { 'modality': modality, 'result': None }
+                participant_id = artifacts.get('participant_id', 'unknown')
+                output_dir = artifacts.get('output_dir', '.')
+                result = preprocessor.preprocess_eda(eda_signal, eda_sfreq, participant_id, output_dir, config.get('EDA', 'eda_cleaning_method', fallback=None))
+            else:
+                logger.error("EDA data is not a DataFrame with required columns.")
+                result = None
+            return { 'modality': modality, 'result': result }
+        elif modality == 'fnirs':
+            from preprocessors.fnirs_preprocessor import FNIRSPreprocessor
+            fnirs_config = FNIRSPreprocessor.default_config()
+            if hasattr(config, 'get'):
+                fnirs_config['beer_lambert_ppf'] = config.getfloat('FNIRS', 'beer_lambert_ppf', fallback=fnirs_config['beer_lambert_ppf'])
+                # Add more keys as needed
+            logger.info(f"fNIRS config for preprocessing: {fnirs_config}")
+            return preprocessor.preprocess(data, fnirs_config, logger)
+        else:
+            logger.error(f"Unknown modality '{modality}' for preprocessing.")
+            return None
+    except Exception as e:
+        logger.error(f"Error preprocessing {modality}: {e}")
+    return { 'modality': modality, 'result': artifacts.get(f"{modality}_preprocessed") }
+
+
+def preprocess_physiological_data(config, components, logger, artifacts):
+    """
+    Universal physiological preprocessing dispatcher for EEG, ECG/HRV, EDA, and fNIRS.
+    Runs available preprocessors in parallel using ParallelTaskRunner.
+    Updates artifacts with results.
+    """
+    from .parallel_runner import ParallelTaskRunner
+    streams = artifacts.get('xdf_streams', {})
+    tasks = []
+    # EEG: Only add if streams['eeg'] is an MNE Raw object
+    if 'eeg' in streams:
+        if isinstance(streams['eeg'], mne.io.BaseRaw):
+            tasks.append({
+                'modality': 'eeg',
+                'preprocessor': components['eeg_preprocessor'],
+                'data': streams['eeg'],
+                'config': config,
+                'logger': logger,
+                'artifacts': artifacts
+            })
+        else:
+            logger.error("EEG stream is not an MNE Raw object. Skipping EEG preprocessing.")
+    # ECG, EDA, fNIRS as before
+    for modality in ['ecg', 'eda']:
+        key = f'{modality}_df'
+        if key in streams and config.getboolean('ProcessingSwitches', f'process_{modality}', fallback=True):
+            tasks.append({
+                'modality': modality,
+                'preprocessor': components[f'{modality}_preprocessor'],
+                'data': streams[key],
+                'config': config,
+                'logger': logger,
+                'artifacts': artifacts
+            })
+    if 'fnirs_cw_amplitude' in streams and config.getboolean('ProcessingSwitches', 'process_fnirs', fallback=True):
+        tasks.append({
+            'modality': 'fnirs',
+            'preprocessor': components['fnirs_preprocessor'],
+            'data': streams['fnirs_cw_amplitude'],
+            'config': config,
+            'logger': logger,
+            'artifacts': artifacts
+        })
+    if not tasks:
+        logger.warning("No physiological preprocessing tasks to run.")
+        return
+    runner = ParallelTaskRunner(
+        task_function=dispatch_preprocessing_task,
+        task_configs=tasks,
+        main_logger_name=logger.name,
+        max_workers=config.getint('Parallel', 'max_workers', fallback=4),
+        thread_name_prefix="PhysioPreproc"
+    )
+    results = runner.run()
+    for res in results:
+        if res is not None and isinstance(res, dict):
+            modality = res.get('modality')
+            result = res.get('result')
+            if modality and result is not None:
+                artifacts[f'{modality}_preprocessed'] = result
+                logger.info(f"Preprocessing complete for {modality}, result stored as '{modality}_preprocessed'.")
+            else:
+                logger.warning(f"Preprocessing for {modality} returned no result.")
+        else:
+            logger.warning(f"A preprocessing task returned no result or unexpected format.")
+    logger.info("Universal physiological preprocessing complete.")

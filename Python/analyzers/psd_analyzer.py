@@ -5,6 +5,11 @@ from typing import Dict, List, Tuple, Optional, Any # Added Any for welch_params
 # No direct import of FAIAnalyzer here, it will be passed as an instance
 
 class PSDAnalyzer:
+    """
+    Analyzer for Power Spectral Density (PSD).
+    Input: MNE Epochs (for compute_psd), DataFrame (for flattening/summary)
+    Output: DataFrame
+    """
     # Default parameters for Welch's method
     DEFAULT_WELCH_WINDOW = 'hann'
     DEFAULT_WELCH_N_FFT_SECONDS = 1.0  # For deriving n_fft from sfreq
@@ -15,10 +20,13 @@ class PSDAnalyzer:
         self.logger = logger
         self.logger.info("PSDAnalyzer initialized.")
 
-    def _flatten_psd_dict_to_df(self, psd_dict: Dict[str, Dict[str, Dict[str, float]]], participant_id: Optional[str] = None) -> pd.DataFrame:
+    def _flatten_psd_dict_to_df(self, psd_dict: dict, participant_id: str = None) -> pd.DataFrame:
         """
         Converts the nested dictionary output from PSD calculation into a long-format DataFrame.
         """
+        if not isinstance(psd_dict, dict):
+            self.logger.error('PSDAnalyzer: Input is not a dict.')
+            return pd.DataFrame()
         all_psd_data = []
         for condition, bands_data in psd_dict.items():
             for band, channels_data in bands_data.items():
@@ -177,6 +185,9 @@ class PSDAnalyzer:
         Returns:
             Optional[pd.DataFrame]: A long-format DataFrame with PSD results, or None on error.
         """
+        if not hasattr(epochs, 'get_data'):
+            self.logger.error('PSDAnalyzer: Input is not an MNE Epochs object.')
+            return None
         if epochs is None or len(epochs) == 0:
             self.logger.warning("PSDAnalyzer - No processed EEG epochs provided or epochs object is empty. Skipping PSD calculation.")
             return None
