@@ -4,6 +4,7 @@ XDF Reader Module
 Reads and parses XDF (Extensible Data Format) files for multimodal data.
 Config-driven, robust, and maintainable.
 """
+import pyxdf
 import pandas as pd
 import logging
 from typing import Dict, Any, Optional
@@ -27,6 +28,23 @@ class XDFReader:
         Loads and parses an XDF file for the given participant.
         Returns a dictionary with stream names as keys and parsed data as values.
         """
-        # Placeholder: implement actual XDF reading logic
-        self.logger.info(f"XDFReader: Loading streams for participant {participant_id} from {xdf_path} (placeholder, implement actual XDF reading logic).")
-        return {}
+        self.logger.info(f"XDFReader: Loading streams for participant {participant_id} from {xdf_path}")
+        try:
+            streams, header = pyxdf.load_xdf(xdf_path)
+        except Exception as e:
+            self.logger.error(f"XDFReader: Failed to load XDF file: {e}", exc_info=True)
+            return {}
+        stream_dict = {}
+        for stream in streams:
+            name = stream['info']['name'][0]
+            time_series = stream['time_series']
+            # Try to convert to DataFrame if possible
+            try:
+                df = pd.DataFrame(time_series)
+                df.columns = [f"ch_{i}" for i in range(df.shape[1])] if df.shape[1] > 1 else [name]
+                stream_dict[name] = df
+                self.logger.info(f"XDFReader: Loaded stream '{name}' with shape {df.shape}.")
+            except Exception as e:
+                stream_dict[name] = time_series
+                self.logger.warning(f"XDFReader: Loaded stream '{name}' as array (could not convert to DataFrame): {e}")
+        return stream_dict

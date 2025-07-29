@@ -25,9 +25,18 @@ class ParallelTaskRunner:
         """
         Runs all tasks in parallel and returns their results.
         """
-        # Placeholder: implement actual parallel execution logic
-        self.logger.info("ParallelTaskRunner: Running tasks in parallel (placeholder, implement actual logic).")
-        return []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        results = [None] * len(self.task_configs)
+        with ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix=self.thread_name_prefix) as executor:
+            future_to_idx = {executor.submit(self.task_function, config): idx for idx, config in enumerate(self.task_configs)}
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    self.logger.error(f"ParallelTaskRunner: Task {idx} failed: {e}", exc_info=True)
+                    results[idx] = None
+        return results
 
 class DAGParallelTaskRunner(ParallelTaskRunner):
     """
@@ -43,7 +52,42 @@ class DAGParallelTaskRunner(ParallelTaskRunner):
     def run(self) -> List[Any]:
         """
         Runs all DAG tasks in parallel and returns their results.
+        Supports both dict-based and object-based (DAGTask) tasks.
         """
-        # Placeholder: implement actual DAG-based parallel execution logic
-        self.logger.info("DAGParallelTaskRunner: Running DAG tasks in parallel (placeholder, implement actual logic).")
-        return []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        completed = set()
+        results = [None] * len(self.dag_tasks)
+        task_indices = list(range(len(self.dag_tasks)))
+        with ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="DAGWorker") as executor:
+            futures = {}
+            while len(completed) < len(self.dag_tasks):
+                ready = []
+                for i in task_indices:
+                    if i in completed:
+                        continue
+                    task = self.dag_tasks[i]
+                    # Support both object (DAGTask) and dict
+                    if hasattr(task, 'deps'):
+                        deps = getattr(task, 'deps', [])
+                    else:
+                        deps = task.get('deps', [])
+                    if all(dep in completed for dep in deps):
+                        ready.append(i)
+                for i in ready:
+                    if i not in futures:
+                        task = self.dag_tasks[i]
+                        if hasattr(task, 'func'):
+                            func = getattr(task, 'func')
+                        else:
+                            func = task.get('func')
+                        futures[i] = executor.submit(func)
+                for i, fut in list(futures.items()):
+                    if fut.done():
+                        try:
+                            results[i] = fut.result()
+                        except Exception as e:
+                            self.logger.error(f"DAGParallelTaskRunner: Task {i} failed: {e}", exc_info=True)
+                            results[i] = None
+                        completed.add(i)
+                        del futures[i]
+        return results

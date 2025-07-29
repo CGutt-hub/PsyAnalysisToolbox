@@ -21,6 +21,4 @@ class QuestionnaireService:
         """
         Processes questionnaire data using the provided configuration.
         """
-        # Placeholder: implement actual questionnaire processing logic
-        self.logger.info("QuestionnaireService: Processing questionnaire (placeholder, implement actual logic).")
-        return data 
+        raise NotImplementedError("process_questionnaire must be implemented for questionnaire processing.") 

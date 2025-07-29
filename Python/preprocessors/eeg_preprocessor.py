@@ -44,13 +44,28 @@ class EEGPreprocessor:
         Returns a dictionary with the processed raw EEG.
         """
         # Debug mode for fast pipeline testing
-        if eeg_config.get('debug_mode', False):
+        debug_mode = False
+        try:
+            if hasattr(eeg_config, 'get') and callable(getattr(eeg_config, 'get', None)) and hasattr(eeg_config, 'sections'):
+                # ConfigParser
+                debug_mode = eeg_config.get('EEG', 'debug_mode', fallback=False)
+            else:
+                debug_mode = eeg_config.get('debug_mode', False)
+        except Exception:
+            debug_mode = False
+        if debug_mode:
             self.logger.warning("EEGPreprocessor: DEBUG MODE ACTIVE - Cropping to 30s, using first 8 channels, ica_n_components=5.")
             if hasattr(raw_eeg, 'crop'):
                 raw_eeg.crop(tmin=0, tmax=min(30, raw_eeg.times[-1]))
             if len(raw_eeg.ch_names) > 8:
                 raw_eeg.pick_channels(raw_eeg.ch_names[:8])
-            eeg_config['ica_n_components'] = 5
+            # Set ica_n_components for debug mode robustly
+            if hasattr(eeg_config, 'get') and callable(getattr(eeg_config, 'get', None)) and hasattr(eeg_config, 'sections'):
+                # ConfigParser: use a local variable
+                ica_n_components = 5
+            else:
+                eeg_config['ica_n_components'] = 5
+                ica_n_components = eeg_config.get('ica_n_components', 5)
             data = np.asarray(raw_eeg.get_data())
             self.logger.info(f"EEGPreprocessor: After debug crop, data shape: {data.shape} (channels, samples)")
             # Fallback crop if still too large

@@ -24,7 +24,20 @@ class ScoreAnalyzer:
         Computes scores from the provided data using config parameters.
         Returns a DataFrame with computed scores.
         """
-        # Placeholder: implement actual scoring logic
-        self.logger.info("ScoreAnalyzer: Computing scores (placeholder, implement actual scoring logic).")
-        columns = ['score_name', 'value']
-        return pd.DataFrame({col: pd.Series(dtype='object') for col in columns})
+        if data is None or data.empty:
+            self.logger.error("ScoreAnalyzer: No data provided.")
+            return pd.DataFrame([], columns=pd.Index(['score_name', 'value']))
+        try:
+            method = config.get('scoring_method', 'mean')
+            results = []
+            for col in data.columns:
+                if method == 'sum':
+                    val = data[col].sum()
+                else:
+                    val = data[col].mean()
+                results.append({'score_name': col, 'value': val})
+            self.logger.info(f"ScoreAnalyzer: Computed scores for {len(results)} columns.")
+            return pd.DataFrame(results)
+        except Exception as e:
+            self.logger.error(f"ScoreAnalyzer: Failed to compute scores: {e}")
+            return pd.DataFrame([], columns=pd.Index(['score_name', 'value']))

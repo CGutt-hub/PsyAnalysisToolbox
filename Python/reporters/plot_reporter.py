@@ -7,13 +7,9 @@ Config-driven, robust, and maintainable.
 import pandas as pd
 import logging
 from typing import Dict, Any
+import matplotlib.pyplot as plt
 
 class PlotReporter:
-    """
-    Handles generation and saving of plots for reporting.
-    - Accepts config dict for plotting parameters.
-    - Usable in any project (no project-specific assumptions).
-    """
     def __init__(self, logger: logging.Logger, output_dir_base: str, reporting_figure_format_config: str, reporting_dpi_config: int):
         self.logger = logger
         self.output_dir_base = output_dir_base
@@ -22,9 +18,12 @@ class PlotReporter:
         self.logger.info("PlotReporter initialized.")
 
     def generate_plot(self, participant_id_or_group: str, plot_config: Dict[str, Any], data_payload: pd.DataFrame) -> None:
-        """
-        Generates and saves a plot using the provided configuration and data.
-        """
-        # Placeholder: implement actual plotting logic
-        self.logger.info(f"PlotReporter: Generating plot for {participant_id_or_group} (placeholder, implement actual plotting logic).")
-        pass
+        # Example: Save a simple plot (user should customize as needed)
+        import os
+        os.makedirs(self.output_dir_base, exist_ok=True)
+        fig, ax = plt.subplots()
+        data_payload.plot(ax=ax)
+        plot_path = os.path.join(self.output_dir_base, f"{participant_id_or_group}.{self.reporting_figure_format_config}")
+        plt.savefig(plot_path, dpi=self.reporting_dpi_config)
+        plt.close(fig)
+        self.logger.info(f"PlotReporter: Saved plot to {plot_path}.")
