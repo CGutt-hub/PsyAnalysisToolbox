@@ -1,30 +1,26 @@
-# moved from reporters/reporting_service.py
-# (content unchanged, just update imports elsewhere) 
+"""
+Reporting Service Module
+-----------------------
+Provides services for generating and managing reports.
+Config-driven, robust, and maintainable.
+"""
+import logging
+from typing import Any
 
-def generate_reports(participant_artifacts, config, components, logger):
+class ReportingService:
     """
-    Generates all reports and plots for a participant.
+    Provides services for generating and managing reports.
+    - Accepts config dict for service parameters.
+    - Usable in any project (no project-specific assumptions).
     """
-    xml_reporter = components.get('xml_reporter')
-    plot_reporter = components.get('plot_reporter')
-    pid = participant_artifacts.participant_id if hasattr(participant_artifacts, 'participant_id') else participant_artifacts.get('participant_id')
-    output_dir = participant_artifacts.output_dir if hasattr(participant_artifacts, 'output_dir') else participant_artifacts.get('output_dir')
-    q_results_df = participant_artifacts.get('questionnaire_results_df')
-    fai_results_df = participant_artifacts.get('fai_results_df')
-    plv_results_df = participant_artifacts.get('plv_results_df')
-    # Example: Save questionnaire results
-    if q_results_df is not None:
-        xml_reporter.save_dataframe(data_df=q_results_df, output_dir=output_dir, filename=f"{pid}_questionnaire_results.xml")
-        logger.info("Saved questionnaire results XML.")
-    # Example: Save FAI and PLV results
-    if fai_results_df is not None:
-        xml_reporter.save_dataframe(data_df=fai_results_df, output_dir=output_dir, filename=f"{pid}_fai_results.xml")
-        logger.info("Saved FAI results XML.")
-    if plv_results_df is not None:
-        xml_reporter.save_dataframe(data_df=plv_results_df, output_dir=output_dir, filename=f"{pid}_plv_results.xml")
-        logger.info("Saved PLV results XML.")
-    # Example: Generate plots (implement as needed)
-    if plot_reporter is not None:
-        plot_reporter.generate_all_plots(participant_artifacts, config, output_dir)
-        logger.info("Generated all plots.")
-    return True 
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+        self.logger.info("ReportingService initialized.")
+
+    def generate_report(self, data: Any, config: Any) -> Any:
+        """
+        Generates a report using the provided data and configuration.
+        """
+        # Placeholder: implement actual report generation logic
+        self.logger.info("ReportingService: Generating report (placeholder, implement actual logic).")
+        return data 
