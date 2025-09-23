@@ -1,42 +1,49 @@
-"""
-ANOVA Analyzer Module
---------------------
-Performs ANOVA statistical analysis on input data.
-Config-driven, robust, and maintainable.
-"""
-import pandas as pd
-import logging
-from typing import Dict, Any, Optional
-import pingouin as pg
-
-class ANOVAAnalyzer:
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.logger.info("ANOVAAnalyzer initialized.")
-
-    def run_anova(self, data: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
-        """
-        Runs ANOVA on the provided data using config parameters.
-        Supports one-way and repeated-measures ANOVA.
-        Returns a DataFrame with ANOVA results.
-        """
-        try:
-            anova_type = config.get('anova_type', 'oneway')
-            if anova_type == 'oneway':
-                dv = config['dv']
-                between = config['between']
-                self.logger.info(f"ANOVAAnalyzer: Running one-way ANOVA on DV='{dv}' with between='{between}'.")
-                results = pg.anova(data=data, dv=dv, between=between, detailed=True)
-            elif anova_type == 'rm':
-                dv = config['dv']
-                within = config['within']
-                subject = config['subject']
-                self.logger.info(f"ANOVAAnalyzer: Running repeated-measures ANOVA on DV='{dv}' with within='{within}', subject='{subject}'.")
-                results = pg.rm_anova(data=data, dv=dv, within=within, subject=subject, detailed=True)
-            else:
-                raise ValueError(f"Unsupported ANOVA type: {anova_type}")
-            self.logger.info("ANOVAAnalyzer: ANOVA completed.")
-            return results
-        except Exception as e:
-            self.logger.error(f"ANOVAAnalyzer: ANOVA failed: {e}", exc_info=True)
-            raise
+import polars as pl, pingouin as pg, sys
+if __name__ == "__main__":
+    # Print usage and exit if arguments are missing
+    usage = lambda: print("Usage: python anova_analyzer.py <input_parquet> <dv> <between> <participant_id> [apply_fdr]") or sys.exit(1)
+    run = lambda input_parquet, dv, between, participant_id, apply_fdr: (
+        print(f"[Nextflow] ANOVA analysis started for participant: {participant_id}") or [
+            # Read input data using Polars and convert to pandas for Pingouin
+            (
+                lambda df: [
+                    # Lambda-driven ANOVA using Pingouin
+                    (
+                        lambda results: [
+                            # Optional FDR correction step
+                            (
+                                lambda df_out: [
+                                    df_out.write_parquet(f"{participant_id}_anova.parquet"),
+                                    print(f"[Nextflow] ANOVA analysis finished for participant: {participant_id}")
+                                ][-1]
+                            )(
+                                (lambda d: (
+                                    # If FDR requested, add corrected p-values and rejection mask
+                                    (lambda fdr:
+                                        d.with_columns([
+                                            pl.Series("p_fdr", fdr[1]),
+                                            pl.Series("rejected", fdr[0])
+                                        ])
+                                    )( __import__('statsmodels.stats.multitest').stats.multitest.fdrcorrection(d['p-unc'].to_numpy()) )
+                                ) if apply_fdr else d
+                                )(results)
+                            )
+                        ][-1]
+                    )(
+                        pl.DataFrame(
+                            pg.anova(data=df, dv=dv, between=between, detailed=True)
+                        )
+                    )
+                ][-1]
+            )(pl.read_parquet(input_parquet).to_pandas())
+        ][-1]
+    )
+    try:
+        args = sys.argv
+        if len(args) < 5:
+            usage()
+        else:
+            apply_fdr = (len(args) > 5 and args[5].lower() in ["1", "true", "yes"])
+            run(args[1], args[2], args[3], args[4], apply_fdr)
+    except Exception as e:
+        print(f"[Nextflow] ANOVA analysis errored for participant: {sys.argv[4] if len(sys.argv)>4 else 'UNKNOWN'}. Error: {e}"); sys.exit(1)

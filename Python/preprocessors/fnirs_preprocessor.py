@@ -1,73 +1,81 @@
-"""
-FNIRS Preprocessor Module
-------------------------
-Universal fNIRS preprocessing for MNE Raw objects.
-Handles filtering, short channel regression, motion correction, and config-driven logic.
-Config-driven, robust, and maintainable.
-"""
-import mne
+import mne, polars as pl, numpy as np, sys, os
 from mne_nirs.signal_enhancement import short_channel_regression
-from mne_nirs.channels import get_long_channels, get_short_channels
-import numpy as np
-import pandas as pd
-import logging
-from typing import Union, Optional, Tuple, List, Dict, Any
-from PsyAnalysisToolbox.Python.utils.logging_utils import log_progress_bar
-
-class FNIRSPreprocessor:
-    """
-    Universal fNIRS preprocessing module for MNE Raw objects.
-    - Accepts a config dict with required and optional keys.
-    - Fills in missing keys with class-level defaults.
-    - Raises clear errors for missing required keys.
-    - Usable in any project (no project-specific assumptions).
-    """
-    DEFAULT_BEER_LAMBERT_REMOVE_OD = True
-    DEFAULT_FILTER_H_TRANS_BANDWIDTH: Union[str, float] = 'auto'
-    DEFAULT_FILTER_L_TRANS_BANDWIDTH: Union[str, float] = 'auto'
-    DEFAULT_FILTER_FIR_DESIGN = 'firwin'
-
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.logger.info("FNIRSPreprocessor initialized.")
-
-    def process(self, raw_fnirs: mne.io.Raw, fnirs_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Main entry point for fNIRS preprocessing.
-        Applies filtering, short channel regression, motion correction, and config-driven logic.
-        Returns a dictionary with the processed raw fNIRS.
-        """
-        # Data integrity check
-        if not isinstance(raw_fnirs, mne.io.Raw):
-            self.logger.error("FNIRSPreprocessor: Input is not an MNE Raw object.")
-            return None
-        if np.isnan(raw_fnirs.get_data()).any():
-            self.logger.error("FNIRSPreprocessor: NaNs detected in input Raw object.")
-            return None
-
-        steps = 3
-        update, close = log_progress_bar(self.logger, steps, desc="FNIRS", per_process=True)
-        update(); self.logger.info("FNIRSPreprocessor: Filtering")
-        # Filtering
-        filter_band = fnirs_config.get('filter_band', (0.01, 0.1))
-        raw_fnirs.filter(l_freq=filter_band[0], h_freq=filter_band[1], fir_design=fnirs_config.get('filter_fir_design', self.DEFAULT_FILTER_FIR_DESIGN), verbose=False)
-        self.logger.info(f"FNIRSPreprocessor: Filtered fNIRS {filter_band[0]}-{filter_band[1]} Hz.")
-
-        # Short channel regression
-        if fnirs_config.get('short_channel_regression', False):
-            self.logger.info("FNIRSPreprocessor: Applying short channel regression.")
-            try:
-                raw_fnirs = short_channel_regression(raw_fnirs)
-            except Exception as e:
-                self.logger.error(f"FNIRSPreprocessor: Short channel regression failed: {e}", exc_info=True)
-                return None
-
-        # Motion correction (if implemented)
-        if fnirs_config.get('motion_correction_method', 'none') != 'none':
-            self.logger.info(f"FNIRSPreprocessor: Motion correction method '{fnirs_config['motion_correction_method']}' requested, but not implemented in this module.")
-
-        update(); self.logger.info("FNIRSPreprocessor: GLM")
-        self.logger.info("FNIRSPreprocessor: fNIRS preprocessing completed.")
-        update(); self.logger.info("FNIRSPreprocessor: Done")
-        close()
-        return {'fnirs_processed_raw': raw_fnirs}
+if __name__ == "__main__":
+    # Lambda: print usage and exit if arguments are missing
+    usage = lambda: print("Usage: python fnirs_preprocessor.py <input_file> <participant_id> [l_freq] [h_freq] [short_reg] [output_parquet]") or sys.exit(1)
+    # Lambda: reconstruct MNE Raw object from Parquet tabular data
+    parquet_to_raw = lambda df, sfreq, ch_names: mne.io.RawArray(
+        np.array([df[ch].to_numpy() for ch in ch_names]),
+        mne.create_info(list(ch_names), sfreq, ch_types="fnirs")
+    )
+    # Lambda: main preprocessing logic, auto-detects file type and applies steps
+    run = lambda input_file, participant_id, l_freq, h_freq, short_reg, output_parquet: (
+        print(f"[Nextflow] fNIRS preprocessing started for participant: {participant_id}") or (
+            # Lambda: get file extension and branch logic
+            (lambda ext: (
+                # Lambda: FIF branch, reads and preprocesses MNE Raw from FIF
+                (lambda raw: (
+                    # Lambda: filter fNIRS data (in-place)
+                    (lambda _: (
+                        # Lambda: apply short channel regression if requested
+                        (lambda _: (
+                            # Lambda: write processed fNIRS to Parquet (channels x samples)
+                            pl.DataFrame({ch: raw.get_data(picks=[ch])[0] for ch in raw.ch_names} | {'participant_id': participant_id}).write_parquet(output_parquet),
+                            print(f"[Nextflow] fNIRS preprocessing finished for participant: {participant_id}")
+                        ))(short_channel_regression(raw) if short_reg else raw)
+                    ))(raw.filter(l_freq=l_freq, h_freq=h_freq, verbose=False) if hasattr(raw, 'filter') else None)
+                ) if not np.isnan(raw.get_data()).any() else (
+                    # Lambda: handle NaNs in fNIRS data
+                    print(f"[Nextflow] fNIRS preprocessing errored for participant: {participant_id}. NaNs detected in fNIRS data."),
+                    pl.DataFrame([]).write_parquet(output_parquet),
+                    sys.exit(1)
+                ))(mne.io.read_raw_fif(input_file, preload=True)) if ext==".fif" else
+                # Lambda: Parquet branch, reads tabular fNIRS and reconstructs MNE Raw
+                (lambda df: (
+                    # Lambda: extract channel names and sampling frequency from Parquet
+                    (lambda ch_names, sfreq: (
+                        # Lambda: reconstruct MNE Raw and preprocess
+                        (lambda raw: (
+                            # Lambda: apply short channel regression if requested
+                            (lambda _: (
+                                # Lambda: write processed fNIRS to Parquet (channels x samples)
+                                pl.DataFrame({ch: raw.get_data(picks=[ch])[0] for ch in ch_names} | {'participant_id': participant_id}).write_parquet(output_parquet),
+                                print(f"[Nextflow] fNIRS preprocessing finished for participant: {participant_id}")
+                            ))(short_channel_regression(raw) if short_reg else raw)
+                        ) if not np.isnan(raw.get_data()).any() else (
+                            # Lambda: handle NaNs in fNIRS data
+                            print(f"[Nextflow] fNIRS preprocessing errored for participant: {participant_id}. NaNs detected in fNIRS data."),
+                            pl.DataFrame([]).write_parquet(output_parquet),
+                            sys.exit(1)
+                        )
+                        )(parquet_to_raw(df, sfreq, ch_names))
+                    ))([c for c in df.columns if c not in ["participant_id", "sfreq"]], float(df.select("sfreq").to_numpy()[0]) if "sfreq" in df.columns else 10.0)
+                ))(pl.read_parquet(input_file)) if ext==".parquet" else (
+                    # Lambda: handle unsupported file types
+                    print(f"[Nextflow] fNIRS preprocessing errored for participant: {participant_id}. Unsupported file type: {ext}"),
+                    pl.DataFrame([]).write_parquet(output_parquet),
+                    sys.exit(1)
+                )
+            ))(os.path.splitext(input_file)[1].lower())
+        ) if l_freq is not None and h_freq is not None else (
+            # Lambda: handle missing filter frequencies
+            print(f"[Nextflow] fNIRS preprocessing errored for participant: {participant_id}. Missing filter frequencies."),
+            pl.DataFrame([]).write_parquet(output_parquet),
+            sys.exit(1)
+        )
+    )
+    try:
+        args = sys.argv
+        if len(args) < 3:
+            usage()
+        else:
+            input_file, participant_id = args[1], args[2]
+            l_freq = float(args[3]) if len(args) > 3 else 0.01
+            h_freq = float(args[4]) if len(args) > 4 else 0.1
+            short_reg = bool(int(args[5])) if len(args) > 5 else False
+            output_parquet = args[6] if len(args) > 6 else f"{participant_id}_fnirs.parquet"
+            run(input_file, participant_id, l_freq, h_freq, short_reg, output_parquet)
+    except Exception as e:
+        pid = sys.argv[2] if len(sys.argv) > 2 else "unknown"
+        print(f"[Nextflow] fNIRS preprocessing errored for participant: {pid}. Error: {e}")
+        sys.exit(1)

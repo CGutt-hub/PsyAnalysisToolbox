@@ -1,41 +1,42 @@
-"""
-Group Level Preprocessor Module
-------------------------------
-Universal group-level preprocessing for aggregated participant data.
-Handles aggregation, cleaning, and config-driven logic.
-Config-driven, robust, and maintainable.
-"""
-import pandas as pd
-import logging
-from typing import Dict, Any, Optional
-
-class GroupLevelPreprocessor:
-    """
-    Universal group-level preprocessing module for aggregated participant data.
-    - Accepts a config dict with required and optional keys.
-    - Fills in missing keys with class-level defaults.
-    - Raises clear errors for missing required keys.
-    - Usable in any project (no project-specific assumptions).
-    """
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.logger.info("GroupLevelPreprocessor initialized.")
-
-    def process(self, group_df: pd.DataFrame, group_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Main entry point for group-level preprocessing.
-        Applies aggregation, cleaning, and config-driven logic.
-        Returns a dictionary with the processed group-level data.
-        """
-        # Data integrity check
-        if not isinstance(group_df, pd.DataFrame):
-            self.logger.error("GroupLevelPreprocessor: Input is not a pandas DataFrame.")
-            return None
-        if group_df.isnull().values.any():
-            self.logger.warning("GroupLevelPreprocessor: NaNs detected in input DataFrame. Proceeding with cleaning.")
-
-        # Aggregation and cleaning (placeholder)
-        # Implement actual aggregation/cleaning logic as needed
-        self.logger.info("GroupLevelPreprocessor: Aggregation and cleaning completed (placeholder).")
-
-        return {'group_level_processed_df': group_df}
+import polars as pl, sys, os, glob
+if __name__ == "__main__":
+    # Lambda: print usage and exit if arguments are missing
+    usage = lambda: print("Usage: python groupLevel_preprocessor.py <input_dir> <output_parquet>") or sys.exit(1)
+    # Lambda: find all participant PDFs and attached Parquet files in input_dir
+    find_parquets = lambda input_dir: [f for pdf in glob.glob(os.path.join(input_dir, "*.pdf")) for f in glob.glob(os.path.splitext(pdf)[0] + "*.parquet")]
+    # Lambda: read and concatenate all Parquet files into a group-level DataFrame
+    aggregate_parquets = lambda parquet_files: pl.concat([pl.read_parquet(f) for f in parquet_files]) if parquet_files else pl.DataFrame([])
+    # Lambda: clean group-level DataFrame (drop NaNs)
+    clean_group_df = lambda df: df.drop_nulls() if df.height > 0 else df
+    # Lambda: write group-level DataFrame to Parquet
+    write_group_parquet = lambda df, output_parquet: df.write_parquet(output_parquet)
+    # Lambda: main group-level preprocessing logic
+    run = lambda input_dir, output_parquet: (
+        print(f"[Nextflow] Group-level preprocessing started for: {input_dir}") or (
+            # Lambda: find all Parquet files attached to participant PDFs
+            (lambda parquet_files: (
+                print(f"[Nextflow] Found {len(parquet_files)} Parquet files for aggregation."),
+                # Lambda: aggregate all Parquet files
+                (lambda group_df: (
+                    print(f"[Nextflow] Aggregated group-level DataFrame shape: {group_df.shape}"),
+                    # Lambda: clean group-level DataFrame
+                    (lambda clean_df: (
+                        print(f"[Nextflow] Cleaned group-level DataFrame shape: {clean_df.shape}"),
+                        # Lambda: write output Parquet
+                        write_group_parquet(clean_df, output_parquet),
+                        print(f"[Nextflow] Group-level preprocessing finished. Output: {output_parquet}")
+                    ))(clean_group_df(group_df))
+                ))(aggregate_parquets(parquet_files))
+            ))(find_parquets(input_dir))
+        )
+    )
+    try:
+        args = sys.argv
+        if len(args) < 3:
+            usage()
+        else:
+            input_dir, output_parquet = args[1], args[2]
+            run(input_dir, output_parquet)
+    except Exception as e:
+        print(f"[Nextflow] Group-level preprocessing errored. Error: {e}")
+        sys.exit(1)

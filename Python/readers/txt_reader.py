@@ -1,54 +1,50 @@
-"""
-TXT Reader Module
-----------------
-Reads and parses TXT questionnaire or data files.
-Config-driven, robust, and maintainable.
-"""
-import pandas as pd
-import logging
-from typing import Dict, Any, Optional
-
-class TXTReader:
-    """
-    Reads and parses TXT questionnaire or data files.
-    - Accepts config dict for reading parameters.
-    - Returns parsed data as a DataFrame.
-    - Usable in any project (no project-specific assumptions).
-    """
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.logger.info("TXTReader initialized.")
-
-    def load_data(self, file_path: str, reader_type: str, file_type: str, delimiter: str, encoding: str) -> pd.DataFrame:
-        """
-        Loads and parses a TXT file using the provided parameters.
-        Returns a DataFrame with the parsed data.
-        Tries multiple strategies for robustness to inconsistent columns.
-        """
-        self.logger.info(f"TXTReader: Loading data from {file_path}")
-        try:
-            df = pd.read_csv(file_path, delimiter=delimiter, encoding=encoding)
-            self.logger.info(f"TXTReader: Loaded TXT file with shape {df.shape} (read_csv).")
-            return df
-        except Exception as e:
-            self.logger.warning(f"TXTReader: read_csv failed: {e}. Trying read_fwf.")
-            try:
-                df = pd.read_fwf(file_path, encoding=encoding)
-                self.logger.info(f"TXTReader: Loaded TXT file with shape {df.shape} (read_fwf).")
-                return df
-            except Exception as e2:
-                self.logger.warning(f"TXTReader: read_fwf failed: {e2}. Trying fallback line-by-line parsing.")
-                try:
-                    with open(file_path, 'r', encoding=encoding) as f:
-                        lines = f.readlines()
-                    # Try to split by delimiter, fallback to whitespace
-                    rows = [line.strip().split(delimiter) if delimiter else line.strip().split() for line in lines if line.strip()]
-                    max_cols = max(len(row) for row in rows)
-                    # Pad rows to max_cols
-                    rows = [row + [''] * (max_cols - len(row)) for row in rows]
-                    df = pd.DataFrame(rows)
-                    self.logger.info(f"TXTReader: Loaded TXT file with shape {df.shape} (fallback line-by-line parsing).")
-                    return df
-                except Exception as e3:
-                    self.logger.error(f"TXTReader: All loading methods failed: {e3}", exc_info=True)
-                    raise
+import polars as pl, sys
+if __name__ == "__main__":
+    # Lambda: print usage and exit if arguments are missing
+    usage = lambda: print("Usage: python txt_reader.py <input_txt> <output_parquet>") or sys.exit(1)
+    # Lambda: main TXT reading logic, maximally nested
+    run = lambda input_txt, output_parquet: (
+        # Lambda: print start message
+        print(f"[Nextflow] TXT reading started for: {input_txt}") or (
+            # Lambda: try reading TXT with different delimiters
+            (lambda df:
+                # Lambda: check if DataFrame is valid
+                (lambda d:
+                    # Lambda: print DataFrame shape
+                    print(f"[Nextflow] Loaded TXT DataFrame shape: {d.shape}") or (
+                        # Lambda: write DataFrame to Parquet
+                        (lambda _: d.write_parquet(output_parquet))(d) or (
+                            # Lambda: print finished message
+                            print(f"[Nextflow] TXT reading finished. Output: {output_parquet}")
+                        )
+                    )
+                )(df) if df is not None else (
+                    # Lambda: print error and exit if parsing failed
+                    print(f"[Nextflow] TXT reading errored. Could not parse TXT: {input_txt}") or sys.exit(1)
+                )
+            )(
+                # Lambda: try each separator and return first successful DataFrame
+                (lambda input_txt:
+                    (lambda seps:
+                        next((
+                            # Lambda: try reading with separator
+                            (lambda sep:
+                                (lambda d:
+                                    d if d is not None else None
+                                )(pl.read_csv(input_txt, separator=sep))
+                            )(sep)
+                            for sep in seps
+                            if (lambda s: True)(sep)
+                        ), None)
+                    )(['\t', ',', ';', '|', ' '])
+                )(input_txt)
+            )
+        )
+    )
+    try:
+        args = sys.argv
+        # Lambda: check argument count and run main logic
+        (lambda a: usage() if len(a) < 3 else run(a[1], a[2]))(args)
+    except Exception as e:
+        print(f"[Nextflow] TXT reading errored. Error: {e}")
+        sys.exit(1)

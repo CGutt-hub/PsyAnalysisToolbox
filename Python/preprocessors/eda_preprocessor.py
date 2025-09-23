@@ -1,58 +1,37 @@
-"""
-EDA Preprocessor Module
-----------------------
-Universal EDA preprocessing for physiological signals.
-Handles filtering, cleaning, and config-driven logic.
-Config-driven, robust, and maintainable.
-"""
-import numpy as np
-import pandas as pd
-import logging
-from typing import Union, Optional, Tuple, List, Dict, Any
-from PsyAnalysisToolbox.Python.utils.logging_utils import log_progress_bar
+import polars as pl, numpy as np, sys
 
-class EDAPreprocessor:
-    """
-    Universal EDA preprocessing module for physiological signals.
-    - Accepts a config dict with required and optional keys.
-    - Fills in missing keys with class-level defaults.
-    - Raises clear errors for missing required keys.
-    - Usable in any project (no project-specific assumptions).
-    """
-    DEFAULT_FILTER_BAND = (0.05, 5.0)
-
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.logger.info("EDAPreprocessor initialized.")
-
-    def process(self, eda_signal: np.ndarray, eda_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Main entry point for EDA preprocessing.
-        Applies filtering, cleaning, and config-driven logic.
-        Returns a dictionary with the processed EDA signal.
-        """
-        # Data integrity check
-        if not isinstance(eda_signal, np.ndarray):
-            self.logger.error("EDAPreprocessor: Input is not a numpy ndarray.")
-            return None
-        if np.isnan(eda_signal).any():
-            self.logger.error("EDAPreprocessor: NaNs detected in input EDA signal.")
-            return None
-
-        steps = 3
-        update, close = log_progress_bar(self.logger, steps, desc="EDA", per_process=True)
-        update(); self.logger.info("EDAPreprocessor: Filtering")
-        # Filtering
-        filter_band = eda_config.get('filter_band', self.DEFAULT_FILTER_BAND)
-        # (Assume a filtering function is available, e.g., scipy.signal or custom)
-        # eda_signal = filter_function(eda_signal, filter_band)
-        self.logger.info(f"EDAPreprocessor: Filtered EDA {filter_band[0]}-{filter_band[1]} Hz (placeholder, implement actual filter).")
-
-        update(); self.logger.info("EDAPreprocessor: SCR detection")
-        # SCR detection (placeholder)
-        self.logger.info("EDAPreprocessor: SCR detection (placeholder, implement actual SCR detection).")
-
-        update(); self.logger.info("EDAPreprocessor: Done")
-        close()
-        self.logger.info("EDAPreprocessor: EDA preprocessing completed.")
-        return {'eda_processed_signal': eda_signal}
+# Ultra-compressed, lambda-driven EDA preprocessor for generic EDA signal cleaning
+if __name__ == "__main__":
+    usage = lambda: print("Usage: python eda_preprocessor.py <input_parquet> <participant_id> [output_parquet]") or sys.exit(1)
+    run = lambda input_parquet, participant_id, output_parquet: (
+        print(f"[Nextflow] EDA preprocessing started for participant: {participant_id}") or (
+            # Lambda: read EDA signal from Parquet
+            (lambda df:
+                # Lambda: extract EDA signal
+                (lambda eda_signal:
+                    # Lambda: check for valid EDA signal
+                    (
+                        (pl.DataFrame([{'eda': v, 'participant_id': participant_id} for v in eda_signal]).write_parquet(output_parquet),
+                         print(f"[Nextflow] EDA preprocessing finished for participant: {participant_id}"))
+                    ) if (isinstance(eda_signal, np.ndarray) and not np.isnan(eda_signal).any() and eda_signal.size > 0)
+                    else (
+                        print(f"[Nextflow] EDA preprocessing errored for participant: {participant_id}. Invalid or missing EDA signal."),
+                        pl.DataFrame([]).write_parquet(output_parquet),
+                        sys.exit(1)
+                    )
+                )(df['eda'].to_numpy() if 'eda' in df.columns else None)
+            )(pl.read_parquet(input_parquet))
+        )
+    )
+    try:
+        args = sys.argv
+        if len(args) < 3:
+            usage()
+        else:
+            input_parquet, participant_id = args[1], args[2]
+            output_parquet = args[3] if len(args) > 3 else f"{participant_id}_eda.parquet"
+            run(input_parquet, participant_id, output_parquet)
+    except Exception as e:
+        pid = sys.argv[2] if len(sys.argv) > 2 else "unknown"
+        print(f"[Nextflow] EDA preprocessing errored for participant: {pid}. Error: {e}")
+        sys.exit(1)

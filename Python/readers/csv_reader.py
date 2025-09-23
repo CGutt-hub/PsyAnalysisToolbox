@@ -1,24 +1,28 @@
-"""
-CSV Reader Module
-----------------
-Reads and parses CSV data files.
-Config-driven, robust, and maintainable.
-"""
-import pandas as pd
-import logging
-from typing import Dict, Any, Optional
-
-class CSVReader:
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.logger.info("CSVReader initialized.")
-
-    def load_data(self, file_path: str, config: Dict[str, Any]) -> pd.DataFrame:
-        self.logger.info(f"CSVReader: Loading data from {file_path}")
-        try:
-            df = pd.read_csv(file_path, **config)
-            self.logger.info(f"CSVReader: Loaded CSV file with shape {df.shape}.")
-            return df
-        except Exception as e:
-            self.logger.error(f"CSVReader: Failed to load CSV file: {e}", exc_info=True)
-            raise
+import polars as pl, sys
+if __name__ == "__main__":
+    # Lambda: print usage and exit if arguments are missing
+    usage = lambda: print("Usage: python csv_reader.py <input_csv> <output_parquet>") or sys.exit(1)
+    # Lambda: main CSV reading logic, maximally nested
+    run = lambda input_csv, output_parquet: (
+        # Lambda: print start message
+        print(f"[Nextflow] CSV reading started for: {input_csv}") or (
+            # Lambda: read CSV and process DataFrame
+            (lambda df:
+                # Lambda: print DataFrame shape
+                print(f"[Nextflow] Loaded CSV DataFrame shape: {df.shape}") or (
+                    # Lambda: write DataFrame to Parquet
+                    (lambda _: df.write_parquet(output_parquet))(df) or (
+                        # Lambda: print finished message
+                        print(f"[Nextflow] CSV reading finished. Output: {output_parquet}")
+                    )
+                )
+            )(pl.read_csv(input_csv))
+        )
+    )
+    try:
+        args = sys.argv
+        # Lambda: check argument count and run main logic
+        (lambda a: usage() if len(a) < 3 else run(a[1], a[2]))(args)
+    except Exception as e:
+        print(f"[Nextflow] CSV reading errored. Error: {e}")
+        sys.exit(1)

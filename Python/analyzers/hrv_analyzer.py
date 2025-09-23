@@ -1,61 +1,43 @@
-"""
-HRV Analyzer Module
-------------------
-Computes Heart Rate Variability (HRV) metrics from ECG data.
-Config-driven, robust, and maintainable.
-"""
-import pandas as pd
-import logging
-from typing import Dict, Any, Optional
-
-class HRVAnalyzer:
-    """
-    Computes Heart Rate Variability (HRV) metrics from ECG data.
-    - Accepts config dict for analysis parameters.
-    - Returns HRV results as a DataFrame.
-    - Usable in any project (no project-specific assumptions).
-    """
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.logger.info("HRVAnalyzer initialized.")
-
-    def compute_hrv(self, ecg_data: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
-        """
-        Computes HRV metrics from the provided ECG data using config parameters.
-        Returns a DataFrame with HRV results.
-        """
-        import numpy as np
-        if ecg_data is None or ecg_data.empty:
-            self.logger.error("HRVAnalyzer: No ECG data provided.")
-            return pd.DataFrame([], columns=pd.Index(['metric', 'value']))
-        try:
-            # Try to get R-peak sample indices
-            if 'R_Peak_Sample' in ecg_data.columns:
-                rpeaks = ecg_data['R_Peak_Sample'].to_numpy()
-            elif 'rpeaks' in ecg_data.columns:
-                rpeaks = ecg_data['rpeaks'].to_numpy()
-            else:
-                self.logger.error("HRVAnalyzer: No R-peak column found in ECG data.")
-                return pd.DataFrame([], columns=pd.Index(['metric', 'value']))
-            # Try both nested and flat config
-            try:
-                if 'ECG' in config and isinstance(config['ECG'], dict):
-                    sfreq = float(config['ECG'].get('sfreq', 1000.0))
-                else:
-                    sfreq = float(config.get('ECG.sfreq', 1000.0))
-            except Exception:
-                sfreq = 1000.0
-            rr_intervals = np.diff(rpeaks) / sfreq
-            mean_rr = np.mean(rr_intervals)
-            sdnn = np.std(rr_intervals)
-            rmssd = np.sqrt(np.mean(np.diff(rr_intervals) ** 2))
-            results = [
-                {'metric': 'mean_rr', 'value': mean_rr},
-                {'metric': 'sdnn', 'value': sdnn},
-                {'metric': 'rmssd', 'value': rmssd}
-            ]
-            self.logger.info("HRVAnalyzer: Computed HRV metrics.")
-            return pd.DataFrame(results)
-        except Exception as e:
-            self.logger.error(f"HRVAnalyzer: Failed to compute HRV: {e}")
-            return pd.DataFrame([], columns=pd.Index(['metric', 'value']))
+import polars as pl, numpy as np, sys
+if __name__ == "__main__":
+    usage = lambda: print("Usage: python hrv_analyzer.py <input_parquet> <sfreq> <participant_id>") or sys.exit(1)
+    run = lambda input_parquet, sfreq, participant_id, output_parquet: (
+        print(f"[Nextflow] HRV analysis started for participant: {participant_id}") or (
+            # Lambda: read input data using Polars
+            (lambda df:
+                # Lambda: extract R-peak locations (supports two common column names)
+                (lambda rpeaks:
+                    # Lambda: validate R-peak data and compute RR intervals
+                    (lambda rr_intervals:
+                        # Only compute metrics if RR intervals are valid
+                        (
+                            (lambda metrics:
+                                (pl.DataFrame(metrics).write_parquet(output_parquet),
+                                 print(f"[Nextflow] HRV analysis finished for participant: {participant_id}"))
+                            )([
+                                {'metric': 'mean_rr', 'value': np.mean(rr_intervals)},      # Mean RR interval
+                                {'metric': 'sdnn', 'value': np.std(rr_intervals)},          # Standard deviation of RR intervals
+                                {'metric': 'rmssd', 'value': np.sqrt(np.mean(np.diff(rr_intervals) ** 2))}  # RMSSD
+                            ])
+                        ) if rr_intervals is not None else (
+                            print(f"[Nextflow] HRV analysis errored for participant: {participant_id}. No R-peak column found or not enough peaks."),
+                            pl.DataFrame([]).write_parquet(output_parquet),
+                            sys.exit(1)
+                        )
+                    )(np.diff(rpeaks) / sfreq if rpeaks is not None and len(rpeaks) > 1 else None)
+                )(df['R_Peak_Sample'].to_numpy() if 'R_Peak_Sample' in df.columns else df['rpeaks'].to_numpy() if 'rpeaks' in df.columns else None)
+            )(pl.read_parquet(input_parquet).to_pandas())
+        )
+    )
+    try:
+        args = sys.argv
+        if len(args) < 4:
+            usage()
+        else:
+            input_parquet, sfreq, participant_id = args[1], float(args[2]), args[3]
+            output_parquet = f"{participant_id}_hrv.parquet"
+            run(input_parquet, sfreq, participant_id, output_parquet)
+    except Exception as e:
+        pid = sys.argv[3] if len(sys.argv) > 3 else "unknown"
+        print(f"[Nextflow] HRV analysis errored for participant: {pid}. Error: {e}")
+        sys.exit(1)

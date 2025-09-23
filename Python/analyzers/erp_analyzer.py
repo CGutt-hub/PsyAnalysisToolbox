@@ -1,53 +1,47 @@
-"""
-ERP Analyzer Module
-------------------
-Computes Event-Related Potentials (ERP) from EEG data.
-Config-driven, robust, and maintainable.
-"""
-import pandas as pd
-import logging
-from typing import Dict, Any, Optional
 
-class ERPAnalyzer:
-    """
-    Computes Event-Related Potentials (ERP) from EEG data.
-    - Accepts config dict for analysis parameters.
-    - Returns ERP results as a DataFrame.
-    - Usable in any project (no project-specific assumptions).
-    """
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.logger.info("ERPAnalyzer initialized.")
+import polars as pl, mne, numpy as np, sys
 
-    def compute_erp(self, eeg_data: Any, config: Dict[str, Any]) -> pd.DataFrame:
-        """
-        Computes ERP from the provided EEG data using config parameters.
-        Returns a DataFrame with ERP results.
-        """
-        # Assume eeg_data is an MNE Epochs object
-        import numpy as np
-        if eeg_data is None:
-            self.logger.error("ERPAnalyzer: No EEG data provided.")
-            return pd.DataFrame([], columns=pd.Index(['condition', 'channel', 'latency', 'amplitude']))
-        try:
-            erp_results = []
-            for cond in eeg_data.event_id:
-                evoked = eeg_data[cond].average()
-                for ch_idx, ch_name in enumerate(evoked.ch_names):
-                    # Find peak amplitude and latency in the ERP window
-                    data = evoked.data[ch_idx]
-                    peak_idx = np.argmax(np.abs(data))
-                    peak_amp = data[peak_idx]
-                    latency = evoked.times[peak_idx]
-                    erp_results.append({
-                        'condition': cond,
-                        'channel': ch_name,
-                        'latency': latency,
-                        'amplitude': peak_amp
-                    })
-            df = pd.DataFrame(erp_results)
-            self.logger.info(f"ERPAnalyzer: Computed ERP for {len(df)} channel-condition pairs.")
-            return df
-        except Exception as e:
-            self.logger.error(f"ERPAnalyzer: Failed to compute ERP: {e}")
-            return pd.DataFrame([], columns=pd.Index(['condition', 'channel', 'latency', 'amplitude']))
+if __name__ == "__main__":
+    usage = lambda: print("Usage: python erp_analyzer.py <input_fif> <participant_id>") or sys.exit(1)
+    run = lambda input_fif, participant_id, output_parquet: (
+        print(f"[Nextflow] ERP analysis started for participant: {participant_id}") or (
+            # Lambda: read MNE Epochs object from .fif file
+            (lambda epochs:
+                # Lambda: flatten nested lists/objects for robust type handling
+                (lambda flatten:
+                    # Lambda: extract ERP results for each condition/channel
+                    (lambda erp_results:
+                        # Lambda: convert results to Polars DataFrame and write to Parquet
+                        (pl.DataFrame(erp_results).write_parquet(output_parquet),
+                         print(f"[Nextflow] ERP analysis finished for participant: {participant_id}"))
+                    )([
+                        {
+                            'condition': cond,
+                            'channel': ch_name,
+                            'latency': evoked.times[peak_idx],
+                            'amplitude': evoked.data[ch_idx][peak_idx]
+                        }
+                        for cond in epochs.event_id
+                        for cond_epochs in [flatten(epochs[cond], 10)]
+                        if isinstance(cond_epochs, mne.Epochs)
+                        for evoked in [flatten(cond_epochs.average(), 2)]
+                        if isinstance(evoked, mne.Evoked)
+                        for ch_idx, ch_name in enumerate(evoked.ch_names)
+                        for peak_idx in [np.argmax(np.abs(evoked.data[ch_idx]))]
+                    ])
+                )(lambda obj, n: next((o for _ in range(n) for o in [obj[0] if isinstance(obj, list) and len(obj) > 0 else obj] if not (isinstance(o, list) and len(o) > 0)), obj))
+            )(mne.read_epochs(input_fif, preload=True))
+        )
+    )
+    try:
+        args = sys.argv
+        if len(args) < 3:
+            usage()
+        else:
+            input_fif, participant_id = args[1], args[2]
+            output_parquet = f"{participant_id}_erp.parquet"
+            run(input_fif, participant_id, output_parquet)
+    except Exception as e:
+        pid = sys.argv[2] if len(sys.argv) > 2 else "unknown"
+        print(f"[Nextflow] ERP analysis errored for participant: {pid}. Error: {e}")
+        sys.exit(1)

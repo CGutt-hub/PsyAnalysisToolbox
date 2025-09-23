@@ -1,50 +1,38 @@
-"""
-XDF Reader Module
-----------------
-Reads and parses XDF (Extensible Data Format) files for multimodal data.
-Config-driven, robust, and maintainable.
-"""
-import pyxdf
-import pandas as pd
-import logging
-from typing import Dict, Any, Optional
-
-class XDFReader:
-    """
-    Reads and parses XDF (Extensible Data Format) files for multimodal data.
-    - Accepts config dict for reading parameters.
-    - Returns parsed data as a dictionary of DataFrames or arrays.
-    - Usable in any project (no project-specific assumptions).
-    """
-    def __init__(self, logger: logging.Logger, eeg_stream_name: Optional[str] = None, fnirs_stream_name: Optional[str] = None, marker_stream_name: Optional[str] = None):
-        self.logger = logger
-        self.eeg_stream_name = eeg_stream_name
-        self.fnirs_stream_name = fnirs_stream_name
-        self.marker_stream_name = marker_stream_name
-        self.logger.info("XDFReader initialized.")
-
-    def load_participant_streams(self, participant_id: str, xdf_path: str) -> Dict[str, Any]:
-        """
-        Loads and parses an XDF file for the given participant.
-        Returns a dictionary with stream names as keys and parsed data as values.
-        """
-        self.logger.info(f"XDFReader: Loading streams for participant {participant_id} from {xdf_path}")
-        try:
-            streams, header = pyxdf.load_xdf(xdf_path)
-        except Exception as e:
-            self.logger.error(f"XDFReader: Failed to load XDF file: {e}", exc_info=True)
-            return {}
-        stream_dict = {}
-        for stream in streams:
-            name = stream['info']['name'][0]
-            time_series = stream['time_series']
-            # Try to convert to DataFrame if possible
-            try:
-                df = pd.DataFrame(time_series)
-                df.columns = [f"ch_{i}" for i in range(df.shape[1])] if df.shape[1] > 1 else [name]
-                stream_dict[name] = df
-                self.logger.info(f"XDFReader: Loaded stream '{name}' with shape {df.shape}.")
-            except Exception as e:
-                stream_dict[name] = time_series
-                self.logger.warning(f"XDFReader: Loaded stream '{name}' as array (could not convert to DataFrame): {e}")
-        return stream_dict
+import pyxdf, polars as pl, sys, os
+if __name__ == "__main__":
+    # Lambda: print usage and exit if arguments are missing
+    usage = lambda: print("Usage: python xdf_reader.py <input_xdf> <output_dir>") or sys.exit(1)
+    # Lambda: main XDF reading logic, maximally nested
+    run = lambda input_xdf, output_dir: (
+        # Lambda: print start message
+        print(f"[Nextflow] XDF reading started for: {input_xdf}") or (
+            # Lambda: read XDF and process streams
+            (lambda streams:
+                # Lambda: print number of streams
+                print(f"[Nextflow] Found {len(streams)} streams in XDF.") or [
+                    # Lambda: process each stream
+                    (lambda stream:
+                        # Lambda: extract name and DataFrame from stream
+                        (lambda name, df:
+                            # Lambda: print stream info and write Parquet
+                            print(f"[Nextflow] Writing stream '{name}' shape: {df.shape} to {os.path.join(output_dir, name + '.parquet')}") or (
+                                # Lambda: write DataFrame to Parquet
+                                (lambda _: df.write_parquet(os.path.join(output_dir, name + '.parquet')))(df)
+                            )
+                        )(stream['info']['name'][0], pl.DataFrame(stream['time_series']) if len(stream['time_series']) > 0 else pl.DataFrame([]))
+                    )(stream)
+                    for stream in streams
+                ] or (
+                    # Lambda: print finished message
+                    print(f"[Nextflow] XDF reading finished. Output dir: {output_dir}")
+                )
+            )(pyxdf.load_xdf(input_xdf)[0])
+        )
+    )
+    try:
+        args = sys.argv
+        # Lambda: check argument count and run main logic
+        (lambda a: usage() if len(a) < 3 else run(a[1], a[2]))(args)
+    except Exception as e:
+        print(f"[Nextflow] XDF reading errored. Error: {e}")
+        sys.exit(1)
