@@ -1,6 +1,4 @@
 import polars as pl, numpy as np, sys
-
-# Ultra-compressed, lambda-driven EDA preprocessor for generic EDA signal cleaning
 if __name__ == "__main__":
     usage = lambda: print("Usage: python eda_preprocessor.py <input_parquet> <participant_id> [output_parquet]") or sys.exit(1)
     run = lambda input_parquet, participant_id, output_parquet: (

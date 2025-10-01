@@ -3,40 +3,29 @@ if __name__ == "__main__":
     # Print usage and exit if arguments are missing
     usage = lambda: print("Usage: python anova_analyzer.py <input_parquet> <dv> <between> <participant_id> [apply_fdr]") or sys.exit(1)
     run = lambda input_parquet, dv, between, participant_id, apply_fdr: (
-        print(f"[Nextflow] ANOVA analysis started for participant: {participant_id}") or [
-            # Read input data using Polars and convert to pandas for Pingouin
-            (
-                lambda df: [
-                    # Lambda-driven ANOVA using Pingouin
-                    (
-                        lambda results: [
-                            # Optional FDR correction step
-                            (
-                                lambda df_out: [
-                                    df_out.write_parquet(f"{participant_id}_anova.parquet"),
-                                    print(f"[Nextflow] ANOVA analysis finished for participant: {participant_id}")
-                                ][-1]
-                            )(
-                                (lambda d: (
-                                    # If FDR requested, add corrected p-values and rejection mask
-                                    (lambda fdr:
-                                        d.with_columns([
-                                            pl.Series("p_fdr", fdr[1]),
-                                            pl.Series("rejected", fdr[0])
-                                        ])
-                                    )( __import__('statsmodels.stats.multitest').stats.multitest.fdrcorrection(d['p-unc'].to_numpy()) )
-                                ) if apply_fdr else d
-                                )(results)
-                            )
-                        ][-1]
-                    )(
-                        pl.DataFrame(
-                            pg.anova(data=df, dv=dv, between=between, detailed=True)
-                        )
-                    )
-                ][-1]
-            )(pl.read_parquet(input_parquet).to_pandas())
-        ][-1]
+        print(f"[Nextflow] ANOVA analysis started for participant: {participant_id}"),
+        (lambda df: (
+            print(f"[Nextflow] Data loaded for ANOVA: shape={df.shape}"),
+            (lambda results: (
+                print(f"[Nextflow] ANOVA results calculated."),
+                (lambda d: (
+                    print(f"[Nextflow] FDR correction {'applied' if apply_fdr else 'skipped'}."),
+                    (lambda df_out: (
+                        print(f"[Nextflow] Writing ANOVA output for participant: {participant_id}"),
+                        df_out[1].write_parquet(f"{participant_id}_anova.parquet"),
+                        print(f"[Nextflow] ANOVA analysis finished for participant: {participant_id}")
+                    ))(d)
+                ))((
+                    (lambda fdr: (
+                        print(f"[Nextflow] FDR correction results: rejected={fdr[0]}, p_fdr={fdr[1]}"),
+                        results.with_columns([
+                            pl.Series("p_fdr", fdr[1]),
+                            pl.Series("rejected", fdr[0])
+                        ])
+                    ))(__import__('statsmodels.stats.multitest').stats.multitest.fdrcorrection(results['p-unc'].to_numpy()))
+                ) if apply_fdr else results)
+            ))(pl.DataFrame(pg.anova(data=df, dv=dv, between=between, detailed=True)))
+        ))(pl.read_parquet(input_parquet).to_pandas())
     )
     try:
         args = sys.argv

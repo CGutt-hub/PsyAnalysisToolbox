@@ -3,34 +3,33 @@ import polars as pl, numpy as np, sys, ast
 if __name__ == "__main__":
     usage = lambda: print("Usage: python fai_analyzer.py <input_parquet> <fai_band_name> <electrode_pairs> <participant_id>\nelectrode_pairs format: [(left1,right1),(left2,right2)] (as a Python list string)") or sys.exit(1)
     run = lambda input_parquet, fai_band_name, electrode_pairs, participant_id, output_parquet: (
-        print(f"[Nextflow] FAI analysis started for participant: {participant_id}") or (
-            # Lambda: read input data using Polars
-            (lambda df:
-                # Lambda: compute FAI for each electrode pair and condition
-                (lambda results:
-                    # Lambda: write results to Parquet
-                    (results.write_parquet(output_parquet),
-                     print(f"[Nextflow] FAI analysis finished for participant: {participant_id}"))
-                )(
-                    pl.DataFrame([
-                        {
-                            'condition': cond,
-                            'band': fai_band_name,
-                            'fai_value': float(
-                                np.log(df.filter((df['channel'] == right) & (df['band'] == fai_band_name) & (df['condition'] == cond))['power'].to_numpy()[0])
-                                - np.log(df.filter((df['channel'] == left) & (df['band'] == fai_band_name) & (df['condition'] == cond))['power'].to_numpy()[0])
-                            )  # FAI = log(right) - log(left)
-                        }
-                        for left, right in electrode_pairs
-                        for cond in df['condition'].unique()
-                        if (
-                            len(df.filter((df['channel'] == left) & (df['band'] == fai_band_name) & (df['condition'] == cond))['power']) > 0 and
-                            len(df.filter((df['channel'] == right) & (df['band'] == fai_band_name) & (df['condition'] == cond))['power']) > 0
-                        )
-                    ]) if df is not None and len(df) > 0 else pl.DataFrame([])
+        print(f"[Nextflow] FAI analysis started for participant: {participant_id}"),
+        (lambda df: (
+            print(f"[Nextflow] Data loaded for FAI: shape={df.shape}"),
+            (lambda results: (
+                print(f"[Nextflow] FAI results calculated: {len(results)} entries."),
+                (lambda _: (
+                    print(f"[Nextflow] Writing FAI output for participant: {participant_id}"),
+                    results.write_parquet(output_parquet),
+                    print(f"[Nextflow] FAI analysis finished for participant: {participant_id}")
+                ))(results)
+            ))(pl.DataFrame([
+                {
+                    'condition': cond,
+                    'band': fai_band_name,
+                    'fai_value': float(
+                        np.log(df.filter((df['channel'] == right) & (df['band'] == fai_band_name) & (df['condition'] == cond))['power'].to_numpy()[0])
+                        - np.log(df.filter((df['channel'] == left) & (df['band'] == fai_band_name) & (df['condition'] == cond))['power'].to_numpy()[0])
+                    )
+                }
+                for left, right in electrode_pairs
+                for cond in df['condition'].unique()
+                if (
+                    len(df.filter((df['channel'] == left) & (df['band'] == fai_band_name) & (df['condition'] == cond))['power']) > 0 and
+                    len(df.filter((df['channel'] == right) & (df['band'] == fai_band_name) & (df['condition'] == cond))['power']) > 0
                 )
-            )(pl.read_parquet(input_parquet))
-        )
+            ]) if df is not None and len(df) > 0 else pl.DataFrame([]))
+        ))(pl.read_parquet(input_parquet))
     )
     try:
         args = sys.argv
