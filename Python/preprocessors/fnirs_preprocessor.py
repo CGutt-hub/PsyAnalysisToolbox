@@ -1,81 +1,84 @@
 import mne, polars as pl, numpy as np, sys, os
 from mne_nirs.signal_enhancement import short_channel_regression
 if __name__ == "__main__":
-    # Lambda: print usage and exit if arguments are missing
-    usage = lambda: print("Usage: python fnirs_preprocessor.py <input_file> <participant_id> [l_freq] [h_freq] [short_reg] [output_parquet]") or sys.exit(1)
-    # Lambda: reconstruct MNE Raw object from Parquet tabular data
-    parquet_to_raw = lambda df, sfreq, ch_names: mne.io.RawArray(
-        np.array([df[ch].to_numpy() for ch in ch_names]),
-        mne.create_info(list(ch_names), sfreq, ch_types="fnirs")
-    )
-    # Lambda: main preprocessing logic, auto-detects file type and applies steps
-    run = lambda input_file, participant_id, l_freq, h_freq, short_reg, output_parquet: (
-        print(f"[Nextflow] fNIRS preprocessing started for participant: {participant_id}") or (
-            # Lambda: get file extension and branch logic
+    usage = lambda: print("Usage: python fnirs_preprocessor.py <input_file> [l_freq] [h_freq] [short_reg]") or sys.exit(1)
+    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_fnirs.parquet"
+    run = lambda input_file, l_freq, h_freq, short_reg: (
+        print(f"[Nextflow] fNIRS preprocessing started for file: {input_file}") or
             (lambda ext: (
-                # Lambda: FIF branch, reads and preprocesses MNE Raw from FIF
-                (lambda raw: (
-                    # Lambda: filter fNIRS data (in-place)
-                    (lambda _: (
-                        # Lambda: apply short channel regression if requested
-                        (lambda _: (
-                            # Lambda: write processed fNIRS to Parquet (channels x samples)
-                            pl.DataFrame({ch: raw.get_data(picks=[ch])[0] for ch in raw.ch_names} | {'participant_id': participant_id}).write_parquet(output_parquet),
-                            print(f"[Nextflow] fNIRS preprocessing finished for participant: {participant_id}")
-                        ))(short_channel_regression(raw) if short_reg else raw)
-                    ))(raw.filter(l_freq=l_freq, h_freq=h_freq, verbose=False) if hasattr(raw, 'filter') else None)
-                ) if not np.isnan(raw.get_data()).any() else (
-                    # Lambda: handle NaNs in fNIRS data
-                    print(f"[Nextflow] fNIRS preprocessing errored for participant: {participant_id}. NaNs detected in fNIRS data."),
-                    pl.DataFrame([]).write_parquet(output_parquet),
-                    sys.exit(1)
-                ))(mne.io.read_raw_fif(input_file, preload=True)) if ext==".fif" else
-                # Lambda: Parquet branch, reads tabular fNIRS and reconstructs MNE Raw
-                (lambda df: (
-                    # Lambda: extract channel names and sampling frequency from Parquet
-                    (lambda ch_names, sfreq: (
-                        # Lambda: reconstruct MNE Raw and preprocess
-                        (lambda raw: (
-                            # Lambda: apply short channel regression if requested
-                            (lambda _: (
-                                # Lambda: write processed fNIRS to Parquet (channels x samples)
-                                pl.DataFrame({ch: raw.get_data(picks=[ch])[0] for ch in ch_names} | {'participant_id': participant_id}).write_parquet(output_parquet),
-                                print(f"[Nextflow] fNIRS preprocessing finished for participant: {participant_id}")
-                            ))(short_channel_regression(raw) if short_reg else raw)
-                        ) if not np.isnan(raw.get_data()).any() else (
-                            # Lambda: handle NaNs in fNIRS data
-                            print(f"[Nextflow] fNIRS preprocessing errored for participant: {participant_id}. NaNs detected in fNIRS data."),
-                            pl.DataFrame([]).write_parquet(output_parquet),
-                            sys.exit(1)
+                (lambda parquet_to_raw: (
+                    (lambda raw:
+                        (
+                            (pl.from_pandas(raw.to_data_frame()).write_parquet(get_output_filename(input_file))
+                             or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}"))
+                            if isinstance(raw, mne.io.BaseRaw) and hasattr(raw, 'to_data_frame') else
+                            (
+                                pl.DataFrame({
+                                    ch: (
+                                        (lambda data:
+                                            data[0] if isinstance(data, tuple) and hasattr(data, '__getitem__') and len(data) > 0 else
+                                            data[0] if isinstance(data, (np.ndarray, list)) and len(data) > 0 else
+                                            data if isinstance(data, float) else None
+                                        )(raw.get_data(picks=[ch]))
+                                        if isinstance(raw, mne.io.BaseRaw) and ch in raw.ch_names else None
+                                    )
+                                    for ch in raw.ch_names
+                                }).write_parquet(get_output_filename(input_file))
+                                or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}")
+                            )
+                            if isinstance(raw, mne.io.BaseRaw) else print(f"[Nextflow] fNIRS preprocessing errored for file: {input_file}. Invalid raw object.")
                         )
-                        )(parquet_to_raw(df, sfreq, ch_names))
-                    ))([c for c in df.columns if c not in ["participant_id", "sfreq"]], float(df.select("sfreq").to_numpy()[0]) if "sfreq" in df.columns else 10.0)
-                ))(pl.read_parquet(input_file)) if ext==".parquet" else (
-                    # Lambda: handle unsupported file types
-                    print(f"[Nextflow] fNIRS preprocessing errored for participant: {participant_id}. Unsupported file type: {ext}"),
-                    pl.DataFrame([]).write_parquet(output_parquet),
-                    sys.exit(1)
-                )
+                    )(short_channel_regression(mne.io.read_raw_fif(input_file, preload=True).filter(l_freq=l_freq, h_freq=h_freq, verbose=False)) if short_reg else mne.io.read_raw_fif(input_file, preload=True).filter(l_freq=l_freq, h_freq=h_freq, verbose=False)) if ext == ".fif" else
+                    (lambda df: (
+                        (lambda ch_names, sfreq: (
+                            (lambda raw:
+                                (
+                                    (pl.from_pandas(raw.to_data_frame()).write_parquet(get_output_filename(input_file))
+                                     or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}"))
+                                    if isinstance(raw, mne.io.BaseRaw) and hasattr(raw, 'to_data_frame') else
+                                    (
+                                        pl.DataFrame({
+                                            ch: (
+                                                (lambda data:
+                                                    data[0] if isinstance(data, tuple) and hasattr(data, '__getitem__') and len(data) > 0 else
+                                                    data[0] if isinstance(data, (np.ndarray, list)) and len(data) > 0 else
+                                                    data if isinstance(data, float) else None
+                                                )(raw.get_data(picks=[ch]))
+                                                if isinstance(raw, mne.io.BaseRaw) and ch in raw.ch_names else None
+                                            )
+                                            for ch in raw.ch_names
+                                        }).write_parquet(get_output_filename(input_file))
+                                        or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}")
+                                    )
+                                    if isinstance(raw, mne.io.BaseRaw) else print(f"[Nextflow] fNIRS preprocessing errored for file: {input_file}. Invalid raw object.")
+                                )
+                            )(short_channel_regression(parquet_to_raw(df, sfreq, ch_names)) if short_reg else parquet_to_raw(df, sfreq, ch_names))
+                        ))([c for c in df.columns if c != "sfreq"], float(df.select("sfreq").to_numpy()[0]) if "sfreq" in df.columns else 10.0)
+                    ))(pl.read_parquet(input_file)) if ext == ".parquet" else (
+                        print(f"[Nextflow] fNIRS preprocessing errored for file: {input_file}. Unsupported file type: {ext}") or
+                        pl.DataFrame([]).write_parquet(get_output_filename(input_file)) or
+                        sys.exit(1)
+                    )
+                ))(lambda df, sfreq, ch_names: mne.io.RawArray(
+                    np.array([df[ch].to_numpy() for ch in ch_names]),
+                    mne.create_info(list(ch_names), sfreq, ch_types="fnirs")
+                ))
             ))(os.path.splitext(input_file)[1].lower())
         ) if l_freq is not None and h_freq is not None else (
-            # Lambda: handle missing filter frequencies
-            print(f"[Nextflow] fNIRS preprocessing errored for participant: {participant_id}. Missing filter frequencies."),
-            pl.DataFrame([]).write_parquet(output_parquet),
+            print(f"[Nextflow] fNIRS preprocessing errored for file: {input_file}. Missing filter frequencies.") or
+            pl.DataFrame([]).write_parquet(get_output_filename(input_file)) or
             sys.exit(1)
         )
-    )
     try:
         args = sys.argv
         if len(args) < 3:
             usage()
         else:
-            input_file, participant_id = args[1], args[2]
-            l_freq = float(args[3]) if len(args) > 3 else 0.01
-            h_freq = float(args[4]) if len(args) > 4 else 0.1
-            short_reg = bool(int(args[5])) if len(args) > 5 else False
-            output_parquet = args[6] if len(args) > 6 else f"{participant_id}_fnirs.parquet"
-            run(input_file, participant_id, l_freq, h_freq, short_reg, output_parquet)
+            input_file = args[1]
+            l_freq = float(args[2]) if len(args) > 2 else 0.01
+            h_freq = float(args[3]) if len(args) > 3 else 0.1
+            short_reg = bool(int(args[4])) if len(args) > 4 else False
+            run(input_file, l_freq, h_freq, short_reg)
     except Exception as e:
-        pid = sys.argv[2] if len(sys.argv) > 2 else "unknown"
-        print(f"[Nextflow] fNIRS preprocessing errored for participant: {pid}. Error: {e}")
+        print(f"[Nextflow] fNIRS preprocessing errored for file: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
         sys.exit(1)

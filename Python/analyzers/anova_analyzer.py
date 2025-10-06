@@ -1,7 +1,8 @@
-import polars as pl, pingouin as pg, sys
+import polars as pl, pingouin as pg, sys, os
 if __name__ == "__main__":
     # Print usage and exit if arguments are missing
     usage = lambda: print("Usage: python anova_analyzer.py <input_parquet> <dv> <between> <participant_id> [apply_fdr]") or sys.exit(1)
+    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_anova.parquet"
     run = lambda input_parquet, dv, between, participant_id, apply_fdr: (
         print(f"[Nextflow] ANOVA analysis started for participant: {participant_id}"),
         (lambda df: (
@@ -12,7 +13,7 @@ if __name__ == "__main__":
                     print(f"[Nextflow] FDR correction {'applied' if apply_fdr else 'skipped'}."),
                     (lambda df_out: (
                         print(f"[Nextflow] Writing ANOVA output for participant: {participant_id}"),
-                        df_out[1].write_parquet(f"{participant_id}_anova.parquet"),
+                        df_out[1].write_parquet(get_output_filename(input_parquet)),
                         print(f"[Nextflow] ANOVA analysis finished for participant: {participant_id}")
                     ))(d)
                 ))((

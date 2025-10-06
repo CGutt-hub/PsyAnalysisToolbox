@@ -1,19 +1,19 @@
 
-import polars as pl, mne, numpy as np, sys
-
+import polars as pl, mne, numpy as np, sys, os
 if __name__ == "__main__":
-    usage = lambda: print("Usage: python erp_analyzer.py <input_fif> <participant_id>") or sys.exit(1)
-    run = lambda input_fif, participant_id, output_parquet: (
-        print(f"[Nextflow] ERP analysis started for participant: {participant_id}"),
+    usage = lambda: print("Usage: python erp_analyzer.py <input_fif>") or sys.exit(1)
+    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_erp.parquet"
+    run = lambda input_fif: (
+        print(f"[Nextflow] ERP analysis started for input: {input_fif}"),
         (lambda epochs: (
             print(f"[Nextflow] MNE Epochs object loaded."),
             (lambda flatten: (
                 print(f"[Nextflow] Flatten function ready."),
                 (lambda erp_results: (
                     print(f"[Nextflow] ERP results extracted: {len(erp_results)} entries."),
-                    print(f"[Nextflow] Writing ERP output for participant: {participant_id}"),
-                    pl.DataFrame(erp_results).write_parquet(output_parquet),
-                    print(f"[Nextflow] ERP analysis finished for participant: {participant_id}")
+                    print(f"[Nextflow] Writing ERP output for input: {input_fif}"),
+                    pl.DataFrame(erp_results).write_parquet(get_output_filename(input_fif)),
+                    print(f"[Nextflow] ERP analysis finished for input: {input_fif}")
                 ))([
                     {
                         'condition': cond,
@@ -34,13 +34,11 @@ if __name__ == "__main__":
     )
     try:
         args = sys.argv
-        if len(args) < 3:
+        if len(args) < 2:
             usage()
         else:
-            input_fif, participant_id = args[1], args[2]
-            output_parquet = f"{participant_id}_erp.parquet"
-            run(input_fif, participant_id, output_parquet)
+            input_fif = args[1]
+            run(input_fif)
     except Exception as e:
-        pid = sys.argv[2] if len(sys.argv) > 2 else "unknown"
-        print(f"[Nextflow] ERP analysis errored for participant: {pid}. Error: {e}")
+        print(f"[Nextflow] ERP analysis errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
         sys.exit(1)

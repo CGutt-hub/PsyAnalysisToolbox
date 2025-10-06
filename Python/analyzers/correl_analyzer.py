@@ -1,19 +1,19 @@
-import polars as pl, sys
+import polars as pl, sys, os
 from scipy.stats import pearsonr
 if __name__ == "__main__":
-    # Print usage and exit if arguments are missing
-    usage = lambda: print("Usage: python correlation_analyzer.py <input_parquet> <participant_id>") or sys.exit(1)
-    run = lambda input_parquet, participant_id: (
-        print(f"[Nextflow] Correlation analysis started for participant: {participant_id}"),
+    usage = lambda: print("Usage: python correlation_analyzer.py <input_parquet>") or sys.exit(1)
+    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_correl.parquet"
+    run = lambda input_parquet: (
+        print(f"[Nextflow] Correlation analysis started for input: {input_parquet}"),
         (lambda df: (
             print(f"[Nextflow] Data loaded for correlation: shape={df.shape}"),
             (lambda num: (
                 print(f"[Nextflow] Numeric columns selected: {num}"),
                 (lambda results: (
                     print(f"[Nextflow] Pairwise Pearson correlations calculated."),
-                    print(f"[Nextflow] Writing correlation output for participant: {participant_id}"),
-                    results.write_parquet(f"{participant_id}_correlation.parquet"),
-                    print(f"[Nextflow] Correlation analysis finished for participant: {participant_id}")
+                    print(f"[Nextflow] Writing correlation output for input: {input_parquet}"),
+                    results.write_parquet(get_output_filename(input_parquet)),
+                    print(f"[Nextflow] Correlation analysis finished for input: {input_parquet}")
                 ))(pl.DataFrame([
                     {
                         'var1': c1,
@@ -28,9 +28,9 @@ if __name__ == "__main__":
     )
     try:
         args = sys.argv
-        if len(args) < 3:
+        if len(args) < 2:
             usage()
         else:
-            run(args[1], args[2])
+            run(args[1])
     except Exception as e:
-        print(f"[Nextflow] Correlation analysis errored for participant: {sys.argv[2] if len(sys.argv)>2 else 'UNKNOWN'}. Error: {e}"); sys.exit(1)
+        print(f"[Nextflow] Correlation analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}"); sys.exit(1)

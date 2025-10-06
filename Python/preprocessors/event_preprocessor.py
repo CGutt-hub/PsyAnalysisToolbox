@@ -1,42 +1,35 @@
-import polars as pl, sys
+import polars as pl, sys, os
 if __name__ == "__main__":
     # Lambda: print usage and exit if arguments are missing
-    usage = lambda: print("Usage: python event_handling_processor.py <events_parquet> <sfreq> <output_parquet>") or sys.exit(1)
-    # Lambda: read events Parquet file
-    read_parquet = lambda f: pl.read_parquet(f)
-    # Lambda: map conditions to event IDs
-    map_conditions = lambda conds: {str(cond): i+1 for i, cond in enumerate(conds)}
-    # Lambda: create standardized events DataFrame
-    create_events_df = lambda df, sfreq: df.with_columns([
-        (pl.col('onset') * sfreq).cast(int).alias('onset_sample'),
-        pl.col('condition'),
-        pl.col('condition').map_elements(lambda x: map_conditions(df['condition'].unique())[x]).alias('event_id')
-    ]) if 'onset' in df.columns and 'condition' in df.columns else pl.DataFrame([])
-    # Lambda: write events DataFrame to Parquet
-    write_parquet = lambda df, output_parquet: df.write_parquet(output_parquet)
-    # Lambda: main event handling logic
-    run = lambda events_parquet, sfreq, output_parquet: (
-        print(f"[Nextflow] Event handling started for: {events_parquet}") or (
-            # Lambda: read events
-            (lambda df: (
-                print(f"[Nextflow] Loaded events DataFrame shape: {df.shape}"),
-                # Lambda: create standardized events DataFrame
-                (lambda events: (
-                    print(f"[Nextflow] Created standardized events shape: {events.shape}"),
-                    # Lambda: write output Parquet
-                    write_parquet(events, output_parquet),
-                    print(f"[Nextflow] Event handling finished. Output: {output_parquet}")
-                ))(create_events_df(df, float(sfreq)))
-            ))(read_parquet(events_parquet))
-        )
+    usage = lambda: (print("Usage: python event_preprocessor.py <events_parquet> <sfreq> <trigger_condition_map>"), sys.exit(1))
+    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_event.parquet"
+    run = lambda events_parquet, sfreq, trigger_condition_map: (
+        print(f"[Nextflow] Event handling started for: {events_parquet}") or
+        (lambda df:
+            print(f"[Nextflow] Loaded events DataFrame shape: {df.shape}") or
+            (lambda trig_map:
+                print(f"[Nextflow] Using trigger-condition map: {trig_map}") or
+                (lambda events:
+                    print(f"[Nextflow] Created standardized events shape: {events.shape}") or
+                    (events.write_parquet(get_output_filename(events_parquet)), print(f"[Nextflow] Event handling finished. Output: {get_output_filename(events_parquet)}"))
+                )(
+                    df.with_columns([
+                        (pl.col('onset') * float(sfreq)).cast(int).alias('onset_sample'),
+                        pl.col('trigger'),
+                        pl.col('trigger').map_elements(lambda x: trig_map.get(str(x), 'unknown')).alias('condition'),
+                        pl.col('trigger').map_elements(lambda x: int(x)).alias('event_id')
+                    ]) if 'onset' in df.columns and 'trigger' in df.columns else pl.DataFrame([])
+                )
+            )(dict(item.split(':') for item in trigger_condition_map.split(',') if ':' in item))
+        )(pl.read_parquet(events_parquet))
     )
     try:
         args = sys.argv
         if len(args) < 4:
             usage()
         else:
-            events_parquet, sfreq, output_parquet = args[1], args[2], args[3]
-            run(events_parquet, sfreq, output_parquet)
+            events_parquet, sfreq, trigger_condition_map = args[1], args[2], args[3]
+            run(events_parquet, sfreq, trigger_condition_map)
     except Exception as e:
         print(f"[Nextflow] Event handling errored. Error: {e}")
         sys.exit(1)

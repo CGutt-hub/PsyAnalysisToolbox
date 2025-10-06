@@ -1,13 +1,13 @@
 
-import polars as pl, pandas as pd, mne, sys, ast
+import polars as pl, pandas as pd, mne, sys, ast, os
 from mne_nirs.statistics import run_glm
 
 if __name__ == "__main__":
-    usage = lambda: print("Usage: python glm_analyzer.py <input_parquet> <design_matrix_parquet> <sfreq> <ch_types_map> <contrasts_config> <participant_id>\nch_types_map and contrasts_config should be Python dict strings.") or sys.exit(1)
-    run = lambda input_parquet, design_matrix_parquet, sfreq, ch_types_map, contrasts_config, participant_id: (
-        print(f"[Nextflow] GLM analysis started for participant: {participant_id}"),
+    usage = lambda: print("Usage: python glm_analyzer.py <input_parquet> <sfreq> <ch_types_map> <contrasts_config>") or sys.exit(1)
+    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_glm.parquet"
+    run = lambda input_parquet, sfreq, ch_types_map, contrasts_config: (
+        print(f"[Nextflow] GLM analysis started for input: {input_parquet}"),
         print(f"[Nextflow] Loading input epochs: {input_parquet}"),
-        print(f"[Nextflow] Loading design matrix: {design_matrix_parquet}"),
         (lambda df: (
             print(f"[Nextflow] Loaded epochs DataFrame shape: {df.shape}"),
             (lambda ch_names: (
@@ -22,8 +22,8 @@ if __name__ == "__main__":
                                 print(f"[Nextflow] GLM results computed."),
                                 (lambda final_df: (
                                     print(f"[Nextflow] Final GLM DataFrame shape: {final_df.shape}"),
-                                    pl.DataFrame(final_df if not final_df.empty else []).write_parquet(f"{participant_id}_glm.parquet"),
-                                    print(f"[Nextflow] GLM analysis finished for participant: {participant_id}")
+                                    pl.DataFrame(final_df if not final_df.empty else []).write_parquet(get_output_filename(input_parquet)),
+                                    print(f"[Nextflow] GLM analysis finished for input: {input_parquet}")
                                 ))(
                                     pd.concat([
                                         df_.assign(contrast=name)
@@ -32,7 +32,7 @@ if __name__ == "__main__":
                                         if not df_.empty
                                     ], ignore_index=True) if contrasts_config else glm_results.results.to_dataframe()
                                 )
-                            ))(run_glm(raw, pl.read_parquet(design_matrix_parquet).to_pandas()))
+                            ))(run_glm(raw, None))
                         ))(mne.io.RawArray(
                             df.pivot_table(index='channel', columns='time', values='value').reindex(ch_names).to_numpy(),
                             mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types if isinstance(ch_types, str) else ch_types_list[0]),
@@ -45,11 +45,11 @@ if __name__ == "__main__":
     )
     try:
         args = sys.argv
-        if len(args) < 7:
+        if len(args) < 5:
             usage()
         else:
             try:
-                run(args[1], args[2], float(args[3]), ast.literal_eval(args[4]), ast.literal_eval(args[5]), args[6])
+                run(args[1], float(args[2]), ast.literal_eval(args[3]), ast.literal_eval(args[4]))
             except Exception as e:
                 print(f"[Nextflow] GLM analysis errored inside run. Error: {e}")
                 sys.exit(1)
