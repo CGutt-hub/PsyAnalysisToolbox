@@ -16,10 +16,18 @@ if __name__ == "__main__":
                     print(f"[Nextflow] ERP analysis finished for input: {input_fif}")
                 ))([
                     {
+                        # Original ERP analysis data
                         'condition': cond,
                         'channel': ch_name,
                         'latency': evoked.times[peak_idx],
-                        'amplitude': evoked.data[ch_idx][peak_idx]
+                        'amplitude': evoked.data[ch_idx][peak_idx],
+                        # Standardized plotting metadata
+                        'plot_type': 'line',  # ERP waveforms -> line plot
+                        'x_scale': 'nominal',  # time (continuous)
+                        'y_scale': 'nominal',  # amplitude (continuous)
+                        'x_data': evoked.times[peak_idx],  # time for x-axis
+                        'y_data': evoked.data[ch_idx][peak_idx],  # amplitude for y-axis
+                        'x_label': 'Time (s)', 'y_label': 'Amplitude (μV)', 'plot_weight': 1
                     }
                     for cond in epochs.event_id
                     for cond_epochs in [flatten(epochs[cond], 10)]

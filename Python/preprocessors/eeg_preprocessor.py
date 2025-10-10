@@ -24,8 +24,18 @@ if __name__ == "__main__":
                     (lambda ch_names, sfreq: (
                         (lambda raw: (
                             (lambda _: (
-                                pl.DataFrame({ch: raw.get_data(picks=[ch])[0] for ch in raw.ch_names}).write_parquet(get_output_filename(input_file)),
-                                print(f"[Nextflow] EEG preprocessing finished for file: {input_file}")
+                                # Save as FIF for MNE-critical analyses (IC, advanced EEG processing)
+                                raw.save(f"{os.path.splitext(get_output_filename(input_file))[0]}_eeg.fif", overwrite=True, verbose=False),
+                                # Save as parquet for pipeline efficiency (epoching, merging, etc.)
+                                (lambda standardized_df: (
+                                    standardized_df.write_parquet(get_output_filename(input_file)),
+                                    print(f"[Nextflow] EEG preprocessing finished for file: {input_file} (FIF + parquet)")
+                                ))(pl.DataFrame({
+                                    **{ch: raw.get_data(picks=[ch])[0] for ch in raw.ch_names},
+                                    'time': np.arange(raw.n_times) / raw.info['sfreq'],
+                                    'sfreq': [raw.info['sfreq']] * raw.n_times,
+                                    'data_type': ['preprocessed_eeg'] * raw.n_times
+                                }))
                             ))(raw.set_eeg_reference(reference, verbose=False) if hasattr(raw, 'set_eeg_reference') else None)
                         ) if not np.isnan(raw.get_data()).any() else (
                             print(f"[Nextflow] EEG preprocessing errored for file: {input_file}. NaNs detected in EEG data."),

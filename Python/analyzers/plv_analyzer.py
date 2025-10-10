@@ -1,82 +1,65 @@
-import polars as pl, numpy as np, sys, os, ast
-from scipy.signal import butter, filtfilt, hilbert
+import polars as pl, numpy as np, sys, os
+from scipy.signal import hilbert
 if __name__ == "__main__":
-    usage = lambda: print("Usage: python plv_analyzer.py <signal_parquet_list> <bands_config> <channels_list>") or sys.exit(1)
+    usage = lambda: print("Usage: python plv_analyzer.py <input_parquet>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_plv.parquet"
-    run = lambda signal_parquet_list, bands_config, channels_list: (
-        print(f"[Nextflow] PLV analysis started for input: {signal_parquet_list[0]}") or
-        (lambda dfs:
-            (lambda results:
-                (pl.DataFrame(results).write_parquet(get_output_filename(signal_parquet_list[0])),
-                 print(f"[Nextflow] PLV analysis finished for input: {signal_parquet_list[0]}"))
-            )([
-                dict(
-                    band=band,
-                    modality_pair=f'{i}-{j}',
-                    channel_pair=f'{ch1}-{ch2}',
-                    plv_value=(
-                        (lambda vals1, vals2, fs1, fs2, band:
-                            float(np.abs(np.mean(np.exp(1j * (
-                                (
-                                    np.angle((lambda sig, fs, band:
-                                        (
-                                            np.asarray(
-                                                hilbert(
-                                                    (lambda s, f, b:
-                                                        (lambda ba:
-                                                            filtfilt(ba[0], ba[1], np.asarray(s, dtype=np.float64)) if ba is not None else np.asarray(s, dtype=np.float64)
-                                                        )(butter(2, [b[0]/(f/2), b[1]/(f/2)], btype='band', output='ba') if f > 0 and b[0] > 0 and b[1] > b[0] and b[1] < f/2 else None)
-                                                    )(sig, fs, band)
-                                                ), dtype=np.complex128
-                                            ).flatten() if sig is not None and len(sig) > 0 and fs > 0 and band[0] > 0 and band[1] > band[0] and band[1] < fs/2
-                                            else np.asarray(hilbert(np.asarray(sig, dtype=np.float64)), dtype=np.complex128).flatten() if sig is not None and len(sig) > 0 else np.zeros(1, dtype=np.complex128)
-                                        ) if sig is not None and len(sig) > 0 else np.zeros(1, dtype=np.complex128)
-                                    )(vals1, fs1, band) if vals1 is not None and len(vals1) > 0 else np.zeros(1, dtype=np.complex128)
-                                ))
-                                -
-                                (
-                                    np.angle((lambda sig, fs, band:
-                                        (
-                                            np.asarray(
-                                                hilbert(
-                                                    (lambda s, f, b:
-                                                        (lambda ba:
-                                                            filtfilt(ba[0], ba[1], np.asarray(s, dtype=np.float64)) if ba is not None else np.asarray(s, dtype=np.float64)
-                                                        )(butter(2, [b[0]/(f/2), b[1]/(f/2)], btype='band', output='ba') if f > 0 and b[0] > 0 and b[1] > b[0] and b[1] < f/2 else None)
-                                                    )(sig, fs, band)
-                                                ), dtype=np.complex128
-                                            ).flatten() if sig is not None and len(sig) > 0 and fs > 0 and band[0] > 0 and band[1] > band[0] and band[1] < fs/2
-                                            else np.asarray(hilbert(np.asarray(sig, dtype=np.float64)), dtype=np.complex128).flatten() if sig is not None and len(sig) > 0 else np.zeros(1, dtype=np.complex128)
-                                        ) if sig is not None and len(sig) > 0 else np.zeros(1, dtype=np.complex128)
-                                    )(vals2, fs2, band) if vals2 is not None and len(vals2) > 0 else np.zeros(1, dtype=np.complex128)
-                                ))
-                            )))))
-                        )(
-                            (lambda df, ch, cond: np.asarray(df[(df['channel']==ch)&(df['condition']==cond)]['value'].to_numpy(), dtype=np.float64).flatten() if ch in df['channel'].values and cond in df['condition'].values else np.zeros(1, dtype=np.float64))(dfs[i], ch1, cond),
-                            (lambda df, ch, cond: np.asarray(df[(df['channel']==ch)&(df['condition']==cond)]['value'].to_numpy(), dtype=np.float64).flatten() if ch in df['channel'].values and cond in df['condition'].values else np.zeros(1, dtype=np.float64))(dfs[j], ch2, cond),
-                            (lambda df, ch, cond: 1/(df[(df['channel']==ch)&(df['condition']==cond)]['time'].diff().mean()) if len(df[(df['channel']==ch)&(df['condition']==cond)]['value'].to_numpy())>1 and df[(df['channel']==ch)&(df['condition']==cond)]['time'].diff().mean() != 0.0 else 1.0)(dfs[i], ch1, cond),
-                            (lambda df, ch, cond: 1/(df[(df['channel']==ch)&(df['condition']==cond)]['time'].diff().mean()) if len(df[(df['channel']==ch)&(df['condition']==cond)]['value'].to_numpy())>1 and df[(df['channel']==ch)&(df['condition']==cond)]['time'].diff().mean() != 0.0 else 1.0)(dfs[j], ch2, cond),
-                            band
-                        )
-                    )
+    run = lambda input_parquet: (
+        print(f"[Nextflow] PLV analysis started for input: {input_parquet}") or (
+            # Adaptive PLV: Pairwise for 2 channels, Multi-channel for >2 channels
+            (lambda df:
+                (lambda results:
+                    pl.DataFrame(results).write_parquet(get_output_filename(input_parquet)) or
+                    print(f"[Nextflow] PLV analysis finished for input: {input_parquet}")
+                )(
+                    # Lambda: calculate multi-channel PLV for all channels together
+                    (lambda channels:
+                        (lambda signals:
+                            (lambda analytic_signals:
+                                (lambda phases:
+                                    # If only 2 channels: pairwise PLV
+                                    [{
+                                        'channel1': channels[0],
+                                        'channel2': channels[1],
+                                        'plv_value': float(np.abs(np.mean(np.exp(1j * (phases[0] - phases[1]))))),
+                                        'plot_type': 'bar',
+                                        'x_scale': 'ordinal',
+                                        'y_scale': 'nominal',
+                                        'x_data': f"{channels[0]}-{channels[1]}",
+                                        'y_data': float(np.abs(np.mean(np.exp(1j * (phases[0] - phases[1]))))),
+                                        'y_label': 'PLV (0-1)',
+                                        'plot_weight': 1,
+                                        'data_type': 'analysis_result'
+                                    }] if len(channels) == 2 else
+                                    # If >2 channels: multi-channel PLV
+                                    [{
+                                        'channels': '_'.join(channels),
+                                        'num_channels': len(channels),
+                                        'plv_value': float(np.abs(np.mean(np.exp(1j * (phases - np.mean(phases, axis=0)).mean(axis=0))))),
+                                        'plot_type': 'bar',
+                                        'x_scale': 'ordinal',
+                                        'y_scale': 'nominal',
+                                        'x_data': f"{len(channels)}_channel_PLV",
+                                        'y_data': float(np.abs(np.mean(np.exp(1j * (phases - np.mean(phases, axis=0)).mean(axis=0))))),
+                                        'y_label': 'Multi-Channel PLV (0-1)',
+                                        'plot_weight': 1,
+                                        'data_type': 'analysis_result'
+                                    }]
+                                )(np.array([np.angle(np.asarray(sig, dtype=complex)) for sig in analytic_signals]))
+                            )([hilbert(sig) for sig in signals])
+                        )([df[ch].to_numpy() for ch in channels])
+                    )([ch for ch in df.columns if ch not in ['time', 'sfreq', 'data_type']])
                 )
-                for idx, (i, j) in enumerate([(i, j) for i in range(len(signal_parquet_list)) for j in range(i+1, len(signal_parquet_list))])
-                for band, freq in list(bands_config.items())
-                for cond in set((lambda dfs, i, j: set(dfs[i]['condition']).intersection(dfs[j]['condition']))(dfs, idx//len(signal_parquet_list), idx%len(signal_parquet_list)))
-                for ch1 in channels_list[idx//len(signal_parquet_list)]
-                for ch2 in channels_list[idx%len(signal_parquet_list)]
-                if len((lambda df, ch, cond: np.asarray(df[(df['channel']==ch)&(df['condition']==cond)]['value'].to_numpy(), dtype=np.float64).flatten() if ch in df['channel'].values and cond in df['condition'].values else np.zeros(1, dtype=np.float64))(dfs[idx//len(signal_parquet_list)], ch1, cond))>0 and len((lambda df, ch, cond: np.asarray(df[(df['channel']==ch)&(df['condition']==cond)]['value'].to_numpy(), dtype=np.float64).flatten() if ch in df['channel'].values and cond in df['condition'].values else np.zeros(1, dtype=np.float64))(dfs[idx%len(signal_parquet_list)], ch2, cond))>0 and len((lambda df, ch, cond: np.asarray(df[(df['channel']==ch)&(df['condition']==cond)]['value'].to_numpy(), dtype=np.float64).flatten() if ch in df['channel'].values and cond in df['condition'].values else np.zeros(1, dtype=np.float64))(dfs[idx//len(signal_parquet_list)], ch1, cond))==len((lambda df, ch, cond: np.asarray(df[(df['channel']==ch)&(df['condition']==cond)]['value'].to_numpy(), dtype=np.float64).flatten() if ch in df['channel'].values and cond in df['condition'].values else np.zeros(1, dtype=np.float64))(dfs[idx%len(signal_parquet_list)], ch2, cond))
-            ])
-        )([pl.read_parquet(f).to_pandas() for f in signal_parquet_list])
+            )(pl.read_parquet(input_parquet))
+        )
     )
+    
     try:
         args = sys.argv
-        if len(args) < 4:
+        if len(args) < 2:
             usage()
         else:
-            signal_parquet_list = ast.literal_eval(args[1])
-            bands_config = ast.literal_eval(args[2])
-            channels_list = ast.literal_eval(args[3])
-            run(signal_parquet_list, bands_config, channels_list)
+            input_parquet = args[1]
+            run(input_parquet)
     except Exception as e:
-        print(f"[Nextflow] PLV analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}"); sys.exit(1)
+        print(f"[Nextflow] PLV analysis errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
+        sys.exit(1)

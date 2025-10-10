@@ -1,8 +1,6 @@
 import sys, subprocess, os
 if __name__ == "__main__":
-    # Lambda: print usage and exit if arguments are missing
     usage = lambda: print("[Nextflow] Usage: python git_sync.py <repo_path>") or sys.exit(1)
-    # Lambda: main git sync logic, lean and nested
     run = lambda repo_path: (
         print(f"[Nextflow] Git Sync started for: {repo_path}") or
             (lambda:
@@ -15,7 +13,6 @@ if __name__ == "__main__":
         )
     try:
         args = sys.argv
-        # Lambda: check argument count and run main logic
         (lambda a: usage() if len(a) < 2 else run(a[1]))(args)
     except Exception as e:
         print(f"[Nextflow] GitSync: Error: {e}")

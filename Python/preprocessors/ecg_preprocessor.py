@@ -8,7 +8,10 @@ if __name__ == "__main__":
                 (lambda ecg_signal:
                     (lambda valid:
                         (lambda rpeaks:
-                            (pl.DataFrame([{'R_Peak_Sample': r} for r in rpeaks]).write_parquet(get_output_filename(input_parquet)),
+                            (pl.DataFrame([
+                                {'R_Peak_Sample': r, 'time': r/sampling_rate, 'sfreq': sampling_rate, 'data_type': 'preprocessed_ecg'} 
+                                for r in rpeaks
+                            ]).write_parquet(get_output_filename(input_parquet)),
                              print(f"[Nextflow] ECG preprocessing finished for file: {input_parquet}"))
                         )(nk.ecg_findpeaks(ecg_signal, sampling_rate=sampling_rate)['ECG_R_Peaks'] if valid else (
                             print(f"[Nextflow] ECG preprocessing errored for file: {input_parquet}. Invalid ECG signal."),

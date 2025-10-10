@@ -12,8 +12,17 @@ if __name__ == "__main__":
                     (pl.DataFrame(scr_results).write_parquet(get_output_filename(input_parquet)),
                      print(f"[Nextflow] SCR analysis finished for input: {input_parquet}"))
                 )([
-                    # Placeholder SCR metrics for demonstration
-                    {'event': None, 'amplitude': None, 'latency': None}
+                    {
+                        # Original SCR data (placeholder)
+                        'event': None, 'amplitude': None, 'latency': None,
+                        # Standardized plotting metadata
+                        'plot_type': 'line',  # SCR over time -> line plot
+                        'x_scale': 'nominal',  # time (continuous)
+                        'y_scale': 'nominal',  # amplitude (continuous)
+                        'x_data': 0.0,  # placeholder time
+                        'y_data': 0.0,  # placeholder amplitude
+                        'x_label': 'Time (s)', 'y_label': 'Amplitude (μS)', 'plot_weight': 1
+                    }
                 ]) if eda_df is not None and len(eda_df) > 0 else (
                     print(f"[Nextflow] SCR analysis errored for input: {input_parquet}. No EDA data found."),
                     pl.DataFrame([]).write_parquet(get_output_filename(input_parquet)),

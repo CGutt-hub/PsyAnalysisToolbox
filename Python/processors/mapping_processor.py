@@ -1,6 +1,5 @@
 import polars as pl, sys, os
 if __name__ == "__main__":
-    # Lambda: print usage and exit if arguments are missing
     usage = lambda: print("Usage: python mapping_processor.py <input_a_parquet> <input_b_parquet> <key_a> <key_b>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_mapping.parquet"
     run = lambda input_a, input_b, key_a, key_b: (

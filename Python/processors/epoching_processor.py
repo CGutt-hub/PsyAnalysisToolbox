@@ -13,8 +13,11 @@ if __name__ == "__main__":
                     print(f"[Nextflow] Epoching finished. Output: {get_output_filename(input_parquet)}")
                 )(
                     pl.concat([
-                        signal.filter((pl.col('time') >= ev['time'] - 100) & (pl.col('time') <= ev['time'] + 100)).with_columns([pl.lit(ev['event']).alias('event')])
-                        for ev in events.iter_rows(named=True)
+                        signal.filter((pl.col('time') >= ev['time'] - 1.0) & (pl.col('time') <= ev['time'] + 1.0)).with_columns([
+                            pl.lit(ev.get('event_id', ev.get('trigger', ev.get('condition', 'unknown')))).alias('event'),
+                            pl.lit(f"epoch_{i}").alias('epoch_id')
+                        ])
+                        for i, ev in enumerate(events.iter_rows(named=True))
                     ]) if events.height > 0 else pl.DataFrame([])
                 )
             )(pl.read_parquet(event_parquet))

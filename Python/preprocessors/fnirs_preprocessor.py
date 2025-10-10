@@ -9,20 +9,32 @@ if __name__ == "__main__":
                 (lambda parquet_to_raw: (
                     (lambda raw:
                         (
-                            (pl.from_pandas(raw.to_data_frame()).write_parquet(get_output_filename(input_file))
-                             or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}"))
+                            (
+                                # Save as FIF for MNE-critical analyses (GLM, advanced fNIRS processing)
+                                raw.save(f"{os.path.splitext(get_output_filename(input_file))[0]}_fnirs.fif", overwrite=True, verbose=False),
+                                # Save as parquet for pipeline efficiency
+                                (lambda standardized_df: (
+                                    standardized_df.write_parquet(get_output_filename(input_file)),
+                                    print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file} (FIF + parquet)")
+                                ))(pl.from_pandas(raw.to_data_frame()).with_columns([
+                                    pl.lit(raw.info['sfreq']).alias('sfreq'),
+                                    pl.lit('preprocessed_fnirs').alias('data_type')
+                                ]))
+                            )
                             if isinstance(raw, mne.io.BaseRaw) and hasattr(raw, 'to_data_frame') else
                             (
                                 pl.DataFrame({
-                                    ch: (
+                                    **{ch: (
                                         (lambda data:
                                             data[0] if isinstance(data, tuple) and hasattr(data, '__getitem__') and len(data) > 0 else
                                             data[0] if isinstance(data, (np.ndarray, list)) and len(data) > 0 else
                                             data if isinstance(data, float) else None
                                         )(raw.get_data(picks=[ch]))
                                         if isinstance(raw, mne.io.BaseRaw) and ch in raw.ch_names else None
-                                    )
-                                    for ch in raw.ch_names
+                                    ) for ch in raw.ch_names},
+                                    'time': np.arange(raw.n_times) / raw.info['sfreq'],
+                                    'sfreq': [raw.info['sfreq']] * raw.n_times,
+                                    'data_type': ['preprocessed_fnirs'] * raw.n_times
                                 }).write_parquet(get_output_filename(input_file))
                                 or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}")
                             )

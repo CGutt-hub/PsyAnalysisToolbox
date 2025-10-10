@@ -17,7 +17,10 @@ if __name__ == "__main__":
                         (pl.col('onset') * float(sfreq)).cast(int).alias('onset_sample'),
                         pl.col('trigger'),
                         pl.col('trigger').map_elements(lambda x: trig_map.get(str(x), 'unknown')).alias('condition'),
-                        pl.col('trigger').map_elements(lambda x: int(x)).alias('event_id')
+                        pl.col('trigger').map_elements(lambda x: int(x)).alias('event_id'),
+                        pl.col('onset').alias('time'),
+                        pl.lit(float(sfreq)).alias('sfreq'),
+                        pl.lit('preprocessed_events').alias('data_type')
                     ]) if 'onset' in df.columns and 'trigger' in df.columns else pl.DataFrame([])
                 )
             )(dict(item.split(':') for item in trigger_condition_map.split(',') if ':' in item))

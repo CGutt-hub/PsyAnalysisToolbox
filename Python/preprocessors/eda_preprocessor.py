@@ -1,5 +1,4 @@
-import polars as pl, numpy as np, sys, os
-import scipy.signal
+import polars as pl, numpy as np, sys, os, scipy.signal
 if __name__ == "__main__":
     usage = lambda: print("Usage: python eda_preprocessor.py <input_parquet> <l_freq> <h_freq>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_eda.parquet"
@@ -11,7 +10,10 @@ if __name__ == "__main__":
                         (lambda filtered:
                             (
                                 print(f"[Nextflow] EDA preprocessing finished for file: {input_parquet}"),
-                                pl.DataFrame([{'eda': v} for v in filtered]).write_parquet(get_output_filename(input_parquet))
+                                pl.DataFrame([
+                                    {'eda': v, 'time': i/1000.0, 'sfreq': 1000.0, 'data_type': 'preprocessed_eda'} 
+                                    for i, v in enumerate(filtered)
+                                ]).write_parquet(get_output_filename(input_parquet))
                             ) if (isinstance(filtered, np.ndarray) and not np.isnan(filtered).any() and filtered.size > 0)
                             else (
                                 print(f"[Nextflow] EDA preprocessing errored for file: {input_parquet}. Invalid or missing EDA signal."),

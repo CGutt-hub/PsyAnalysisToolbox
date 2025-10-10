@@ -12,13 +12,42 @@ if __name__ == "__main__":
                     (lambda rr_intervals:
                         # Only compute metrics if RR intervals are valid
                         (
-                            (lambda metrics:
-                                (pl.DataFrame(metrics).write_parquet(get_output_filename(input_parquet)),
+                            (lambda processed_data, metrics:
+                                (pl.concat([
+                                    # RR intervals for downstream analysis
+                                    pl.DataFrame(processed_data).with_columns([
+                                        pl.lit("processed_rr").alias("data_type"),
+                                        pl.lit(None).alias("plot_type")  # Processed data, not for plotting
+                                    ]),
+                                    # HRV metrics for plotting
+                                    pl.DataFrame(metrics).with_columns([
+                                        pl.lit("analysis_result").alias("data_type")
+                                    ])
+                                ]).write_parquet(get_output_filename(input_parquet)),
                                  print(f"[Nextflow] HRV analysis finished for input: {input_parquet}"))
-                            )([
-                                {'metric': 'mean_rr', 'value': np.mean(rr_intervals)},      # Mean RR interval
-                                {'metric': 'sdnn', 'value': np.std(rr_intervals)},          # Standard deviation of RR intervals
-                                {'metric': 'rmssd', 'value': np.sqrt(np.mean(np.diff(rr_intervals) ** 2))}  # RMSSD
+                            )(
+                                # RR intervals for downstream analysis
+                                [{'rr_interval': interval, 'sample_idx': idx} for idx, interval in enumerate(rr_intervals)],
+                                # HRV analysis metrics
+                                [
+                                    {
+                                        'metric': 'mean_rr', 'value': np.mean(rr_intervals),
+                                        'plot_type': 'bar', 'x_scale': 'ordinal', 'y_scale': 'nominal',
+                                        'x_data': 'mean_rr', 'y_data': np.mean(rr_intervals), 
+                                        'y_label': 'Time (ms)', 'plot_weight': 1
+                                    },
+                                    {
+                                        'metric': 'sdnn', 'value': np.std(rr_intervals),
+                                        'plot_type': 'bar', 'x_scale': 'ordinal', 'y_scale': 'nominal',
+                                        'x_data': 'sdnn', 'y_data': np.std(rr_intervals), 
+                                        'y_label': 'Time (ms)', 'plot_weight': 1
+                                    },
+                                    {
+                                        'metric': 'rmssd', 'value': np.sqrt(np.mean(np.diff(rr_intervals) ** 2)),
+                                        'plot_type': 'bar', 'x_scale': 'ordinal', 'y_scale': 'nominal',
+                                    'x_data': 'rmssd', 'y_data': np.sqrt(np.mean(np.diff(rr_intervals) ** 2)), 
+                                    'y_label': 'Time (ms)', 'plot_weight': 1
+                                }
                             ])
                         ) if rr_intervals is not None else (
                             print(f"[Nextflow] HRV analysis errored for input: {input_parquet}. No R-peak column found or not enough peaks."),

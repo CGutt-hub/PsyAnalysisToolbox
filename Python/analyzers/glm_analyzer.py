@@ -1,7 +1,6 @@
 
 import polars as pl, pandas as pd, mne, sys, ast, os
 from mne_nirs.statistics import run_glm
-
 if __name__ == "__main__":
     usage = lambda: print("Usage: python glm_analyzer.py <input_parquet> <sfreq> <ch_types_map> <contrasts_config>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_glm.parquet"
@@ -22,7 +21,19 @@ if __name__ == "__main__":
                                 print(f"[Nextflow] GLM results computed."),
                                 (lambda final_df: (
                                     print(f"[Nextflow] Final GLM DataFrame shape: {final_df.shape}"),
-                                    pl.DataFrame(final_df if not final_df.empty else []).write_parquet(get_output_filename(input_parquet)),
+                                    # Add standardized plotting metadata
+                                    (pl.DataFrame(final_df if not final_df.empty else []).with_columns([
+                                        pl.lit("bar").alias("plot_type"),  # GLM contrast results -> bar chart
+                                        pl.lit("ordinal").alias("x_scale"),  # contrast names
+                                        pl.lit("nominal").alias("y_scale"),  # t-statistics or p-values
+                                        pl.col("contrast").alias("x_data") if "contrast" in pl.DataFrame(final_df).columns else pl.lit("contrast").alias("x_data"),
+                                        pl.lit(0.0).alias("y_data"),  # placeholder - actual GLM statistic
+                                        pl.lit("t-statistic").alias("y_label"),
+                                        pl.lit(1).alias("plot_weight")
+                                    ]) if not final_df.empty else pl.DataFrame([{
+                                        "plot_type": "bar", "x_scale": "ordinal", "y_scale": "nominal",
+                                        "x_data": "no_data", "y_data": 0.0, "y_label": "t-statistic", "plot_weight": 1
+                                    }])).write_parquet(get_output_filename(input_parquet)),
                                     print(f"[Nextflow] GLM analysis finished for input: {input_parquet}")
                                 ))(
                                     pd.concat([

@@ -13,7 +13,16 @@ if __name__ == "__main__":
                     print(f"[Nextflow] FDR correction {'applied' if apply_fdr else 'skipped'}."),
                     (lambda df_out: (
                         print(f"[Nextflow] Writing ANOVA output for participant: {participant_id}"),
-                        df_out[1].write_parquet(get_output_filename(input_parquet)),
+                        # Add standardized plotting metadata
+                        df_out[1].with_columns([
+                            pl.lit("bar").alias("plot_type"),  # ANOVA results -> bar chart
+                            pl.lit("ordinal").alias("x_scale"),  # factor levels
+                            pl.lit("nominal").alias("y_scale"),  # F-statistics or p-values
+                            pl.col("Source").alias("x_data"),  # ANOVA source/factor names
+                            pl.col("F").alias("y_data"),  # F-statistics for plotting
+                            pl.lit("F-statistic").alias("y_label"),
+                            pl.lit(1).alias("plot_weight")
+                        ]).write_parquet(get_output_filename(input_parquet)),
                         print(f"[Nextflow] ANOVA analysis finished for participant: {participant_id}")
                     ))(d)
                 ))((

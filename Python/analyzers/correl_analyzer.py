@@ -16,10 +16,18 @@ if __name__ == "__main__":
                     print(f"[Nextflow] Correlation analysis finished for input: {input_parquet}")
                 ))(pl.DataFrame([
                     {
+                        # Original analysis data
                         'var1': c1,
                         'var2': c2,
                         'correlation': pearsonr(df[c1].to_numpy(), df[c2].to_numpy())[0],
-                        'p': pearsonr(df[c1].to_numpy(), df[c2].to_numpy())[1]
+                        'p': pearsonr(df[c1].to_numpy(), df[c2].to_numpy())[1],
+                        # Standardized plotting metadata
+                        'plot_type': 'scatter',
+                        'x_scale': 'nominal', 
+                        'y_scale': 'nominal',
+                        'x_data': f"{c1}_vs_{c2}",
+                        'y_data': pearsonr(df[c1].to_numpy(), df[c2].to_numpy())[0],
+                        'y_label': 'Correlation (r)', 'plot_weight': 1
                     }
                     for i, c1 in enumerate(num) for c2 in num[i+1:]
                 ]))

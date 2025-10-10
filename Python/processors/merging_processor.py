@@ -1,6 +1,5 @@
 import polars as pl, sys, os, functools
 if __name__ == "__main__":
-    # Lambda: print usage and exit if arguments are missing
     usage = lambda: print("Usage: python merging_processor.py <key1> <key2> ... <input1.parquet> <input2.parquet> ...") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_merged.parquet"
     run = lambda keys, input_files: (
