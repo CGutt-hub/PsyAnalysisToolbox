@@ -1,10 +1,10 @@
 import mne, polars as pl, numpy as np, sys, os
 from mne_nirs.signal_enhancement import short_channel_regression
 if __name__ == "__main__":
-    usage = lambda: print("Usage: python fnirs_preprocessor.py <input_file> [l_freq] [h_freq] [short_reg]") or sys.exit(1)
+    usage = lambda: print("[PREPROC] Usage: python fnirs_preprocessor.py <input_file> [l_freq] [h_freq] [short_reg]") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_fnirs.parquet"
     run = lambda input_file, l_freq, h_freq, short_reg: (
-        print(f"[Nextflow] fNIRS preprocessing started for file: {input_file}") or
+        print(f"[PREPROC] fNIRS preprocessing started for file: {input_file}") or
             (lambda ext: (
                 (lambda parquet_to_raw: (
                     (lambda raw:
@@ -15,7 +15,7 @@ if __name__ == "__main__":
                                 # Save as parquet for pipeline efficiency
                                 (lambda standardized_df: (
                                     standardized_df.write_parquet(get_output_filename(input_file)),
-                                    print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file} (FIF + parquet)")
+                                    print(f"[PREPROC] fNIRS preprocessing finished for file: {input_file} (FIF + parquet)")
                                 ))(pl.from_pandas(raw.to_data_frame()).with_columns([
                                     pl.lit(raw.info['sfreq']).alias('sfreq'),
                                     pl.lit('preprocessed_fnirs').alias('data_type')
@@ -36,9 +36,9 @@ if __name__ == "__main__":
                                     'sfreq': [raw.info['sfreq']] * raw.n_times,
                                     'data_type': ['preprocessed_fnirs'] * raw.n_times
                                 }).write_parquet(get_output_filename(input_file))
-                                or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}")
+                                or print(f"[PREPROC] fNIRS preprocessing finished for file: {input_file}")
                             )
-                            if isinstance(raw, mne.io.BaseRaw) else print(f"[Nextflow] fNIRS preprocessing errored for file: {input_file}. Invalid raw object.")
+                            if isinstance(raw, mne.io.BaseRaw) else print(f"[PREPROC] fNIRS preprocessing errored for file: {input_file}. Invalid raw object.")
                         )
                     )(short_channel_regression(mne.io.read_raw_fif(input_file, preload=True).filter(l_freq=l_freq, h_freq=h_freq, verbose=False)) if short_reg else mne.io.read_raw_fif(input_file, preload=True).filter(l_freq=l_freq, h_freq=h_freq, verbose=False)) if ext == ".fif" else
                     (lambda df: (
@@ -46,7 +46,7 @@ if __name__ == "__main__":
                             (lambda raw:
                                 (
                                     (pl.from_pandas(raw.to_data_frame()).write_parquet(get_output_filename(input_file))
-                                     or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}"))
+                                     or print(f"[PREPROC] fNIRS preprocessing finished for file: {input_file}"))
                                     if isinstance(raw, mne.io.BaseRaw) and hasattr(raw, 'to_data_frame') else
                                     (
                                         pl.DataFrame({
@@ -60,14 +60,14 @@ if __name__ == "__main__":
                                             )
                                             for ch in raw.ch_names
                                         }).write_parquet(get_output_filename(input_file))
-                                        or print(f"[Nextflow] fNIRS preprocessing finished for file: {input_file}")
+                                        or print(f"[PREPROC] fNIRS preprocessing finished for file: {input_file}")
                                     )
-                                    if isinstance(raw, mne.io.BaseRaw) else print(f"[Nextflow] fNIRS preprocessing errored for file: {input_file}. Invalid raw object.")
+                                    if isinstance(raw, mne.io.BaseRaw) else print(f"[PREPROC] fNIRS preprocessing errored for file: {input_file}. Invalid raw object.")
                                 )
                             )(short_channel_regression(parquet_to_raw(df, sfreq, ch_names)) if short_reg else parquet_to_raw(df, sfreq, ch_names))
                         ))([c for c in df.columns if c != "sfreq"], float(df.select("sfreq").to_numpy()[0]) if "sfreq" in df.columns else 10.0)
                     ))(pl.read_parquet(input_file)) if ext == ".parquet" else (
-                        print(f"[Nextflow] fNIRS preprocessing errored for file: {input_file}. Unsupported file type: {ext}") or
+                        print(f"[PREPROC] fNIRS preprocessing errored for file: {input_file}. Unsupported file type: {ext}") or
                         pl.DataFrame([]).write_parquet(get_output_filename(input_file)) or
                         sys.exit(1)
                     )
@@ -77,7 +77,7 @@ if __name__ == "__main__":
                 ))
             ))(os.path.splitext(input_file)[1].lower())
         ) if l_freq is not None and h_freq is not None else (
-            print(f"[Nextflow] fNIRS preprocessing errored for file: {input_file}. Missing filter frequencies.") or
+            print(f"[PREPROC] fNIRS preprocessing errored for file: {input_file}. Missing filter frequencies.") or
             pl.DataFrame([]).write_parquet(get_output_filename(input_file)) or
             sys.exit(1)
         )
@@ -92,5 +92,5 @@ if __name__ == "__main__":
             short_reg = bool(int(args[4])) if len(args) > 4 else False
             run(input_file, l_freq, h_freq, short_reg)
     except Exception as e:
-        print(f"[Nextflow] fNIRS preprocessing errored for file: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
+        print(f"[PREPROC] Error: {e}")
         sys.exit(1)

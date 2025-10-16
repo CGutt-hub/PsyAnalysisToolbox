@@ -1,18 +1,18 @@
 import polars as pl, numpy as np, sys, os
 from scipy.signal import butter, filtfilt
 if __name__ == "__main__":
-    usage = lambda: print("Usage: python filtering_processor.py <input_parquet> <filter_type> <frequencies> <sampling_freq> <data_columns>") or sys.exit(1)
+    usage = lambda: print("[PROC] Usage: python filtering_processor.py <input_parquet> <filter_type> <frequencies> <sampling_freq> <data_columns>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_filtered.parquet"
     
     run = lambda input_parquet, filter_type, frequencies, sampling_freq, data_columns: (
-        print(f"[Nextflow] Generic filtering started for: {input_parquet}") or
+        print(f"[PROC] Generic filtering started for: {input_parquet}") or
         (lambda df:
             (lambda fs:
                 (lambda freq_list: 
                     (lambda column_list:
                         (lambda filtered_df:
                             (filtered_df.write_parquet(get_output_filename(input_parquet)),
-                             print(f"[Nextflow] Generic filtering finished. Output: {get_output_filename(input_parquet)}"))
+                             print(f"[PROC] Generic filtering finished. Output: {get_output_filename(input_parquet)}"))
                         )(
                             # Apply filtering to each specified data column
                             df.with_columns([
@@ -60,5 +60,5 @@ if __name__ == "__main__":
             input_parquet, filter_type, frequencies, sampling_freq, data_columns = args[1], args[2], args[3], args[4], args[5]
             run(input_parquet, filter_type, frequencies, sampling_freq, data_columns)
     except Exception as e:
-        print(f"[Nextflow] Generic filtering errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
+        print(f"[PROC] Error: {e}")
         sys.exit(1)

@@ -1,14 +1,22 @@
 import polars as pl, sys, os
 if __name__ == "__main__":
-    usage = lambda: print("[Nextflow] Usage: python txt_reader.py <input_txt> <encoding>") or sys.exit(1)
+    usage = lambda: print("[READER] Usage: python txt_reader.py <input_txt> <encoding>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_txt.parquet"
     run = lambda input_txt, encoding: (
-        print(f"[Nextflow] TXT Reader started for: {input_txt}") or
-        (lambda df:
-            print(f"[Nextflow] TXT file loaded: {input_txt}, shape: {df.shape}") or
-            df.write_parquet(get_output_filename(input_txt)) or
-            print(f"[Nextflow] Parquet file saved: {get_output_filename(input_txt)}")
-        )(pl.read_csv(input_txt, separator='\t', encoding=encoding, truncate_ragged_lines=True, ignore_errors=True))
+        print(f"[READER] Started for: {input_txt}") or
+        (lambda lines:
+            print(f"[READER] TXT file loaded: {input_txt}, lines: {len(lines)}") or
+            (lambda df:
+                print(f"[READER] DataFrame created with shape: {df.shape}") or
+                df.write_parquet(get_output_filename(input_txt)) or
+                print(f"[READER] Parquet file saved: {get_output_filename(input_txt)}")
+            )(pl.DataFrame({
+                input_txt.split('/')[-1]: lines  # Use filename as column name
+            }))
+        )(
+            # Read file as plain text lines, preserving all content including tabs
+            open(input_txt, 'r', encoding=encoding).read().split('\n')
+        )
     )
     try:
         args = sys.argv
@@ -19,5 +27,5 @@ if __name__ == "__main__":
             encoding = args[2].strip()
             run(input_txt, encoding)
     except Exception as e:
-        print(f"[Nextflow] TXT Reader errored. Error: {e}")
+        print(f"[READER] Error: {e}")
         sys.exit(1)

@@ -1,9 +1,10 @@
 import polars as pl, numpy as np, sys, os
+from scipy.interpolate import CubicSpline
 if __name__ == "__main__":
     usage = lambda: print("Usage: python hrv_analyzer.py <input_parquet> <sfreq>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_hrv.parquet"
     run = lambda input_parquet, sfreq: (
-        print(f"[Nextflow] HRV analysis started for input: {input_parquet}") or (
+        print(f"[HRV] HRV analysis started for input: {input_parquet}") or (
             # Lambda: read input data using Polars
             (lambda df:
                 # Lambda: extract R-peak locations (supports two common column names)
@@ -24,10 +25,22 @@ if __name__ == "__main__":
                                         pl.lit("analysis_result").alias("data_type")
                                     ])
                                 ]).write_parquet(get_output_filename(input_parquet)),
-                                 print(f"[Nextflow] HRV analysis finished for input: {input_parquet}"))
+                                 print(f"[HRV] HRV analysis finished for input: {input_parquet}"))
                             )(
-                                # RR intervals for downstream analysis
-                                [{'rr_interval': interval, 'sample_idx': idx} for idx, interval in enumerate(rr_intervals)],
+                                # RR intervals + interpolated signal for downstream analysis
+                                (lambda rr_data, interp_data: rr_data + interp_data)(
+                                    [{'rr_interval': interval, 'sample_idx': idx, 'signal_type': 'rr_intervals'} for idx, interval in enumerate(rr_intervals)],
+                                    # Add cubic spline interpolated signal at 4 Hz for PLV analysis (as per proposal)
+                                    (lambda interp_result: [
+                                        {'time': t, 'hrv_continuous': rr, 'sample_idx': idx, 'signal_type': 'interpolated_hrv'} 
+                                        for idx, (t, rr) in enumerate(zip(interp_result[0], interp_result[1]))
+                                    ] if len(rr_intervals) > 3 else [])(
+                                        (lambda peak_times: (
+                                            np.arange(0, peak_times[-1], 0.25),  # 4 Hz sampling (0.25s intervals)
+                                            CubicSpline(peak_times, rr_intervals)(np.arange(0, peak_times[-1], 0.25))
+                                        ))(np.cumsum([0] + list(rr_intervals[:-1])))
+                                    )
+                                ),
                                 # HRV analysis metrics
                                 [
                                     {
@@ -50,7 +63,7 @@ if __name__ == "__main__":
                                 }
                             ])
                         ) if rr_intervals is not None else (
-                            print(f"[Nextflow] HRV analysis errored for input: {input_parquet}. No R-peak column found or not enough peaks."),
+                            print(f"[HRV] HRV analysis errored for input: {input_parquet}. No R-peak column found or not enough peaks."),
                             pl.DataFrame([]).write_parquet(get_output_filename(input_parquet)),
                             sys.exit(1)
                         )
@@ -67,5 +80,5 @@ if __name__ == "__main__":
             input_parquet, sfreq = args[1], float(args[2])
             run(input_parquet, sfreq)
     except Exception as e:
-        print(f"[Nextflow] HRV analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}")
+        print(f"[HRV] HRV analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}")
         sys.exit(1)

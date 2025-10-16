@@ -3,14 +3,14 @@ if __name__ == "__main__":
     usage = lambda: print("Usage: python epoching_processor.py <input_parquet> <event_parquet>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_epoch.parquet"
     run = lambda input_parquet, event_parquet: (
-        print(f"[Nextflow] Epoching started for: {input_parquet}") or
+        print(f"[PROC] Epoching started for: {input_parquet}") or
         (lambda signal:
             (lambda events:
                 (lambda epochs:
-                    print(f"[Nextflow] Loaded signal shape: {signal.shape}, events shape: {events.shape}") or
-                    print(f"[Nextflow] Created {epochs.height} epochs.") or
+                    print(f"[PROC] Loaded signal shape: {signal.shape}, events shape: {events.shape}") or
+                    print(f"[PROC] Created {epochs.height} epochs.") or
                     epochs.write_parquet(get_output_filename(input_parquet)) or
-                    print(f"[Nextflow] Epoching finished. Output: {get_output_filename(input_parquet)}")
+                    print(f"[PROC] Epoching finished. Output: {get_output_filename(input_parquet)}")
                 )(
                     pl.concat([
                         signal.filter((pl.col('time') >= ev['time'] - 1.0) & (pl.col('time') <= ev['time'] + 1.0)).with_columns([
@@ -31,5 +31,5 @@ if __name__ == "__main__":
             input_parquet, event_parquet = args[1], args[2]
             run(input_parquet, event_parquet)
     except Exception as e:
-        print(f"[Nextflow] Epoching errored. Error: {e}")
+        print(f"[PROC] Error: {e}")
         sys.exit(1)

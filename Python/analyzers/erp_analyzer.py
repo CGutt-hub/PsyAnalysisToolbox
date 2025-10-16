@@ -4,16 +4,16 @@ if __name__ == "__main__":
     usage = lambda: print("Usage: python erp_analyzer.py <input_fif>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_erp.parquet"
     run = lambda input_fif: (
-        print(f"[Nextflow] ERP analysis started for input: {input_fif}"),
+        print(f"[ERP] ERP analysis started for input: {input_fif}"),
         (lambda epochs: (
-            print(f"[Nextflow] MNE Epochs object loaded."),
+            print(f"[ERP] MNE Epochs object loaded."),
             (lambda flatten: (
-                print(f"[Nextflow] Flatten function ready."),
+                print(f"[ERP] Flatten function ready."),
                 (lambda erp_results: (
-                    print(f"[Nextflow] ERP results extracted: {len(erp_results)} entries."),
-                    print(f"[Nextflow] Writing ERP output for input: {input_fif}"),
+                    print(f"[ERP] ERP results extracted: {len(erp_results)} entries."),
+                    print(f"[ERP] Writing ERP output for input: {input_fif}"),
                     pl.DataFrame(erp_results).write_parquet(get_output_filename(input_fif)),
-                    print(f"[Nextflow] ERP analysis finished for input: {input_fif}")
+                    print(f"[ERP] ERP analysis finished for input: {input_fif}")
                 ))([
                     {
                         # Original ERP analysis data
@@ -48,5 +48,5 @@ if __name__ == "__main__":
             input_fif = args[1]
             run(input_fif)
     except Exception as e:
-        print(f"[Nextflow] ERP analysis errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
+        print(f"[ERP] ERP analysis errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
         sys.exit(1)

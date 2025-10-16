@@ -3,15 +3,15 @@ if __name__ == "__main__":
     usage = lambda: print("Usage: python fai_analyzer.py <input_parquet> <fai_band_name> <electrode_pairs>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_fai.parquet"
     run = lambda input_parquet, fai_band_name, electrode_pairs: (
-        print(f"[Nextflow] FAI analysis started for input: {input_parquet}"),
+        print(f"[FAI] FAI analysis started for input: {input_parquet}"),
         (lambda df: (
-            print(f"[Nextflow] Data loaded for FAI: shape={df.shape}"),
+            print(f"[FAI] Data loaded for FAI: shape={df.shape}"),
             (lambda results: (
-                print(f"[Nextflow] FAI results calculated: {len(results)} entries."),
+                print(f"[FAI] FAI results calculated: {len(results)} entries."),
                 (lambda _: (
-                    print(f"[Nextflow] Writing FAI output for input: {input_parquet}"),
+                    print(f"[FAI] Writing FAI output for input: {input_parquet}"),
                     results.write_parquet(get_output_filename(input_parquet)),
-                    print(f"[Nextflow] FAI analysis finished for input: {input_parquet}")
+                    print(f"[FAI] FAI analysis finished for input: {input_parquet}")
                 ))(results)
             ))(pl.DataFrame([
                 {
@@ -41,5 +41,5 @@ if __name__ == "__main__":
             electrode_pairs = ast.literal_eval(args[3])
             run(input_parquet, fai_band_name, electrode_pairs)
     except Exception as e:
-        print(f"[Nextflow] FAI analysis errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
+        print(f"[FAI] FAI analysis errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
         sys.exit(1)

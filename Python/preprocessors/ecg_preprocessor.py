@@ -1,9 +1,9 @@
 import polars as pl, numpy as np, neurokit2 as nk, sys, os
 if __name__ == "__main__":
-    usage = lambda: print("Usage: python ecg_preprocessor.py <input_parquet> [sampling_rate]") or sys.exit(1)
+    usage = lambda: print("[PREPROC] Usage: python ecg_preprocessor.py <input_parquet> [sampling_rate]") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_ecg.parquet"
     run = lambda input_parquet, sampling_rate: (
-        print(f"[Nextflow] ECG preprocessing started for file: {input_parquet}") or (
+        print(f"[PREPROC] ECG preprocessing started for file: {input_parquet}") or (
             (lambda df:
                 (lambda ecg_signal:
                     (lambda valid:
@@ -12,9 +12,9 @@ if __name__ == "__main__":
                                 {'R_Peak_Sample': r, 'time': r/sampling_rate, 'sfreq': sampling_rate, 'data_type': 'preprocessed_ecg'} 
                                 for r in rpeaks
                             ]).write_parquet(get_output_filename(input_parquet)),
-                             print(f"[Nextflow] ECG preprocessing finished for file: {input_parquet}"))
+                             print(f"[PREPROC] ECG preprocessing finished for file: {input_parquet}"))
                         )(nk.ecg_findpeaks(ecg_signal, sampling_rate=sampling_rate)['ECG_R_Peaks'] if valid else (
-                            print(f"[Nextflow] ECG preprocessing errored for file: {input_parquet}. Invalid ECG signal."),
+                            print(f"[PREPROC] ECG preprocessing errored for file: {input_parquet}. Invalid ECG signal."),
                             pl.DataFrame([]).write_parquet(get_output_filename(input_parquet)),
                             sys.exit(1)
                         ))
@@ -32,5 +32,5 @@ if __name__ == "__main__":
             sampling_rate = float(args[2]) if len(args) > 2 else 1000.0
             run(input_parquet, sampling_rate)
     except Exception as e:
-        print(f"[Nextflow] ECG preprocessing errored for file: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
+        print(f"[PREPROC] Error: {e}")
         sys.exit(1)

@@ -4,16 +4,16 @@ if __name__ == "__main__":
     usage = lambda: print("Usage: python correlation_analyzer.py <input_parquet>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_correl.parquet"
     run = lambda input_parquet: (
-        print(f"[Nextflow] Correlation analysis started for input: {input_parquet}"),
+        print(f"[CORREL] Correlation analysis started for input: {input_parquet}"),
         (lambda df: (
-            print(f"[Nextflow] Data loaded for correlation: shape={df.shape}"),
+            print(f"[CORREL] Data loaded for correlation: shape={df.shape}"),
             (lambda num: (
-                print(f"[Nextflow] Numeric columns selected: {num}"),
+                print(f"[CORREL] Numeric columns selected: {num}"),
                 (lambda results: (
-                    print(f"[Nextflow] Pairwise Pearson correlations calculated."),
-                    print(f"[Nextflow] Writing correlation output for input: {input_parquet}"),
+                    print(f"[CORREL] Pairwise Pearson correlations calculated."),
+                    print(f"[CORREL] Writing correlation output for input: {input_parquet}"),
                     results.write_parquet(get_output_filename(input_parquet)),
-                    print(f"[Nextflow] Correlation analysis finished for input: {input_parquet}")
+                    print(f"[CORREL] Correlation analysis finished for input: {input_parquet}")
                 ))(pl.DataFrame([
                     {
                         # Original analysis data
@@ -41,4 +41,4 @@ if __name__ == "__main__":
         else:
             run(args[1])
     except Exception as e:
-        print(f"[Nextflow] Correlation analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}"); sys.exit(1)
+        print(f"[CORREL] Correlation analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}"); sys.exit(1)

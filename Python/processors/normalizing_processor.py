@@ -2,17 +2,17 @@ import polars as pl, numpy as np, sys, os
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 
 if __name__ == "__main__":
-    usage = lambda: print("Usage: python normalization_processor.py <input_parquet> <normalization_type> <data_columns> [group_by_columns]") or sys.exit(1)
+    usage = lambda: print("[PROC] Usage: python normalization_processor.py <input_parquet> <normalization_type> <data_columns> [group_by_columns]") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_normalized.parquet"
     
     run = lambda input_parquet, normalization_type, data_columns, group_by_columns: (
-        print(f"[Nextflow] Generic normalization started for: {input_parquet}") or
+        print(f"[PROC] Generic normalization started for: {input_parquet}") or
         (lambda df:
             (lambda column_list:
                 (lambda group_cols:
                     (lambda normalized_df:
                         normalized_df.write_parquet(get_output_filename(input_parquet)) or
-                        print(f"[Nextflow] Generic normalization finished. Output: {get_output_filename(input_parquet)}")
+                        print(f"[PROC] Generic normalization finished. Output: {get_output_filename(input_parquet)}")
                     )(
                         # Apply normalization to specified columns
                         df.with_columns([
@@ -47,5 +47,5 @@ if __name__ == "__main__":
             group_by_columns = args[4] if len(args) > 4 else ""
             run(input_parquet, normalization_type, data_columns, group_by_columns)
     except Exception as e:
-        print(f"[Nextflow] Normalizing errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
+        print(f"[PROC] Error: {e}")
         sys.exit(1)

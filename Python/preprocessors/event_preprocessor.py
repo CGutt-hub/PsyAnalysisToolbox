@@ -1,17 +1,17 @@
 import polars as pl, sys, os
 if __name__ == "__main__":
     # Lambda: print usage and exit if arguments are missing
-    usage = lambda: (print("Usage: python event_preprocessor.py <events_parquet> <sfreq> <trigger_condition_map>"), sys.exit(1))
+    usage = lambda: (print("[PREPROC] Usage: python event_preprocessor.py <events_parquet> <sfreq> <trigger_condition_map>"), sys.exit(1))
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_event.parquet"
     run = lambda events_parquet, sfreq, trigger_condition_map: (
-        print(f"[Nextflow] Event handling started for: {events_parquet}") or
+        print(f"[PREPROC] Event handling started for: {events_parquet}") or
         (lambda df:
-            print(f"[Nextflow] Loaded events DataFrame shape: {df.shape}") or
+            print(f"[PREPROC] Loaded events DataFrame shape: {df.shape}") or
             (lambda trig_map:
-                print(f"[Nextflow] Using trigger-condition map: {trig_map}") or
+                print(f"[PREPROC] Using trigger-condition map: {trig_map}") or
                 (lambda events:
-                    print(f"[Nextflow] Created standardized events shape: {events.shape}") or
-                    (events.write_parquet(get_output_filename(events_parquet)), print(f"[Nextflow] Event handling finished. Output: {get_output_filename(events_parquet)}"))
+                    print(f"[PREPROC] Created standardized events shape: {events.shape}") or
+                    (events.write_parquet(get_output_filename(events_parquet)), print(f"[PREPROC] Event handling finished. Output: {get_output_filename(events_parquet)}"))
                 )(
                     df.with_columns([
                         (pl.col('onset') * float(sfreq)).cast(int).alias('onset_sample'),
@@ -34,5 +34,5 @@ if __name__ == "__main__":
             events_parquet, sfreq, trigger_condition_map = args[1], args[2], args[3]
             run(events_parquet, sfreq, trigger_condition_map)
     except Exception as e:
-        print(f"[Nextflow] Event handling errored. Error: {e}")
+        print(f"[PREPROC] Error: {e}")
         sys.exit(1)

@@ -15,7 +15,7 @@ if __name__ == "__main__":
     )
     
     run = lambda input_file: (
-        print(f"[Nextflow] ICA analysis started for input: {input_file}") or (
+        print(f"[IC] ICA analysis started for input: {input_file}") or (
             # Load EEG data with format-aware loading (FIF preferred for scientific quality)
             (lambda raw:
                     # Fit ICA and apply to data
@@ -46,7 +46,7 @@ if __name__ == "__main__":
                                     for idx in range(len(ica.pca_explained_variance_))
                                 ])
                             ]).write_parquet(get_output_filename(input_file)) or
-                            print(f"[Nextflow] ICA analysis finished for input: {input_file}")
+                            print(f"[IC] ICA analysis finished for input: {input_file}")
                         )(ica.apply(raw.copy()))
                     )((lambda fitted_ica: fitted_ica)(mne.preprocessing.ICA(n_components=0.99, random_state=42).fit(raw)))
                 )(load_eeg_data(input_file))))
@@ -58,5 +58,5 @@ if __name__ == "__main__":
             input_file = args[1]
             run(input_file)
     except Exception as e:
-        print(f"[Nextflow] ICA analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}")
+        print(f"[IC] ICA analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}")
         sys.exit(1)

@@ -28,7 +28,7 @@ if __name__ == "__main__":
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_psd.parquet"
     
     run = lambda input_parquet, bands_config, channels_config: (
-        print(f"[Nextflow] PSD analysis started for input: {input_parquet}") or (
+        print(f"[PSD] PSD analysis started for input: {input_parquet}") or (
             # Load epochs from parquet
             (lambda epochs: (
                 # Parse bands configuration
@@ -38,7 +38,8 @@ if __name__ == "__main__":
                         # Compute PSD using MNE's scientific method
                         (lambda psd_result: (
                             # Extract PSD data and frequencies
-                            (lambda psd_data, freqs: (
+                            (lambda psd_tuple: (
+                                (lambda psd_data, freqs: (
                                 # Compute band power for each channel
                                 (lambda band_powers: (
                                     pl.DataFrame([
@@ -59,19 +60,20 @@ if __name__ == "__main__":
                                         for ch_idx, ch_name in enumerate(epochs.ch_names)
                                         for band_name, (power, band_range) in band_powers[ch_idx].items()
                                     ]).write_parquet(get_output_filename(input_parquet)),
-                                    print(f"[Nextflow] PSD analysis finished for input: {input_parquet}")
+                                    print(f"[PSD] PSD analysis finished for input: {input_parquet}")
                                 ))([
                                     {
                                         band_name: (
-                                            float(np.mean(np.take(psd_data, np.ix_(np.arange(psd_data.shape[0]), [ch_idx], np.where((freqs >= band_range[0]) & (freqs <= band_range[1]))[0])))),
+                                            float(np.mean(psd_data[:, ch_idx, np.where((freqs >= band_range[0]) & (freqs <= band_range[1]))[0]])),
                                             band_range
                                         )
                                         for band_name, band_range in bands.items()
                                     }
                                     for ch_idx in range(len(epochs.ch_names))
                                 ])
-                            ))(psd_result.get_data(), psd_result.freqs)
-                        ))(epochs.compute_psd(
+                            ))(psd_tuple[0], psd_tuple[1])
+                        ))(psd_result.get_data())
+                    ))(epochs.compute_psd(
                             method='welch',
                             fmin=min(band_range[0] for band_range in bands.values()),
                             fmax=max(band_range[1] for band_range in bands.values()),
@@ -83,7 +85,7 @@ if __name__ == "__main__":
             ))(load_epochs_from_parquet(input_parquet))
         )
     )
-    
+
     try:
         args = sys.argv
         if len(args) < 3:
@@ -94,5 +96,5 @@ if __name__ == "__main__":
             channels_config = args[3] if len(args) > 3 else None
             run(input_parquet, bands_config, channels_config)
     except Exception as e:
-        print(f"[Nextflow] PSD analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}")
+        print(f"[PSD] PSD analysis errored for input: {sys.argv[1] if len(sys.argv)>1 else 'UNKNOWN'}. Error: {e}")
         sys.exit(1)

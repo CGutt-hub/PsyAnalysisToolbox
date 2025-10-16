@@ -5,22 +5,22 @@ if __name__ == "__main__":
     usage = lambda: print("Usage: python glm_analyzer.py <input_parquet> <sfreq> <ch_types_map> <contrasts_config>") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_glm.parquet"
     run = lambda input_parquet, sfreq, ch_types_map, contrasts_config: (
-        print(f"[Nextflow] GLM analysis started for input: {input_parquet}"),
-        print(f"[Nextflow] Loading input epochs: {input_parquet}"),
+        print(f"[GLM] GLM analysis started for input: {input_parquet}"),
+        print(f"[GLM] Loading input epochs: {input_parquet}"),
         (lambda df: (
-            print(f"[Nextflow] Loaded epochs DataFrame shape: {df.shape}"),
+            print(f"[GLM] Loaded epochs DataFrame shape: {df.shape}"),
             (lambda ch_names: (
-                print(f"[Nextflow] Channel names: {ch_names}"),
+                print(f"[GLM] Channel names: {ch_names}"),
                 (lambda ch_types_list: (
-                    print(f"[Nextflow] Channel types: {ch_types_list}"),
+                    print(f"[GLM] Channel types: {ch_types_list}"),
                     (lambda ch_types: (
-                        print(f"[Nextflow] Using channel type(s): {ch_types}"),
+                        print(f"[GLM] Using channel type(s): {ch_types}"),
                         (lambda raw: (
-                            print(f"[Nextflow] Created MNE RawArray for GLM."),
+                            print(f"[GLM] Created MNE RawArray for GLM."),
                             (lambda glm_results: (
-                                print(f"[Nextflow] GLM results computed."),
+                                print(f"[GLM] GLM results computed."),
                                 (lambda final_df: (
-                                    print(f"[Nextflow] Final GLM DataFrame shape: {final_df.shape}"),
+                                    print(f"[GLM] Final GLM DataFrame shape: {final_df.shape}"),
                                     # Add standardized plotting metadata
                                     (pl.DataFrame(final_df if not final_df.empty else []).with_columns([
                                         pl.lit("bar").alias("plot_type"),  # GLM contrast results -> bar chart
@@ -34,7 +34,7 @@ if __name__ == "__main__":
                                         "plot_type": "bar", "x_scale": "ordinal", "y_scale": "nominal",
                                         "x_data": "no_data", "y_data": 0.0, "y_label": "t-statistic", "plot_weight": 1
                                     }])).write_parquet(get_output_filename(input_parquet)),
-                                    print(f"[Nextflow] GLM analysis finished for input: {input_parquet}")
+                                    print(f"[GLM] GLM analysis finished for input: {input_parquet}")
                                 ))(
                                     pd.concat([
                                         df_.assign(contrast=name)
@@ -62,8 +62,8 @@ if __name__ == "__main__":
             try:
                 run(args[1], float(args[2]), ast.literal_eval(args[3]), ast.literal_eval(args[4]))
             except Exception as e:
-                print(f"[Nextflow] GLM analysis errored inside run. Error: {e}")
+                print(f"[GLM] GLM analysis errored inside run. Error: {e}")
                 sys.exit(1)
     except Exception as e:
-        print(f"[Nextflow] GLM analysis errored. Error: {e}")
+        print(f"[GLM] GLM analysis errored. Error: {e}")
         sys.exit(1)
