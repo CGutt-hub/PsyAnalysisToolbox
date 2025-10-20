@@ -13,15 +13,17 @@ if __name__ == "__main__":
                         print(f"[READER] Processing stream {idx+1}/{len(streams)}: '{stream['info']['name'][0] if 'name' in stream['info'] and len(stream['info']['name']) > 0 else 'Unknown'}'") or
                         (lambda df:
                             (lambda temp_file:
-                                df.write_parquet(temp_file) or
-                                os.rename(temp_file, get_output_filename(os.path.splitext(os.path.basename(input_xdf))[0], idx)) or
-                                print(f"[READER] Parquet file saved: {get_output_filename(os.path.splitext(os.path.basename(input_xdf))[0], idx)} with shape {df.shape}")
+                                    df.write_parquet(temp_file) or
+                                    os.rename(temp_file, get_output_filename(os.path.splitext(os.path.basename(input_xdf))[0], idx)) or
+                                    print(f"[READER] Parquet file saved: {get_output_filename(os.path.splitext(os.path.basename(input_xdf))[0], idx)} with shape {df.shape}") or
+                                    # write a tiny signal parquet to indicate completion
+                                    (lambda sig: (pl.DataFrame({'signal':[1], 'stream_idx':[idx]}).write_parquet(sig), sig))(get_output_filename(os.path.splitext(os.path.basename(input_xdf))[0], idx).replace('.parquet', '_signal.parquet'))
                             )(tempfile.mktemp(suffix='.parquet', prefix=f"xdf_temp_{idx}_", dir="."))
                         )(pl.DataFrame(stream['time_series']) if len(stream['time_series']) > 0 else pl.DataFrame([]))
                     )(idx, stream)
                     for idx, stream in enumerate(streams)
                 ] or
-                print(f"[READER] Reading finished. Files created in current directory")
+                (lambda sig: (pl.DataFrame({'signal':[1], 'source':[os.path.basename(input_xdf)]}).write_parquet(sig), print(f"[READER] Reading finished. Files created in current directory")))(os.path.splitext(os.path.basename(input_xdf))[0] + '_xdf.parquet')
             ) or print(f"[READER] No streams found in XDF file: {input_xdf}"))
         )(pyxdf.load_xdf(input_xdf)[0])
     )

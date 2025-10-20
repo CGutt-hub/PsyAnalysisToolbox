@@ -22,11 +22,13 @@ if __name__ == "__main__":
                                 )(get_column_selection(df, col_spec))
                             )(idx, col_spec)
                             for idx, col_spec in enumerate(columns)
-                        ],
+                        ]
+                    ) or (
                         # Move all files from temp dir to current dir atomically
                         [shutil.move(os.path.join(temp_dir, f), os.path.join(".", f)) for f in os.listdir(temp_dir) if f.endswith('.parquet')] or
-                        shutil.rmtree(temp_dir) or
-                        print(f"[PROC] Channel extraction completed. Base: {base}, Extracts: {len(columns)}")
+                        (lambda _: (shutil.rmtree(temp_dir), True))(None) or
+                        # write a tiny canonical signal parquet for dispatcher detection
+                        (lambda sig: (pl.DataFrame({'signal':[1], 'base':[base]}).write_parquet(sig), print(f"[PROC] Channel extraction completed. Base: {base}, Extracts: {len(columns)}")))(f"{base}_extr.parquet")
                     )
                 )(tempfile.mkdtemp(prefix="extract_temp_", dir="."))
             )(os.path.splitext(os.path.basename(input_path))[0])
