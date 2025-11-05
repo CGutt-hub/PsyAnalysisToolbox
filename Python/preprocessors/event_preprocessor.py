@@ -11,7 +11,7 @@ if __name__ == "__main__":
                 print(f"[PREPROC] Using trigger-condition map: {trig_map}") or
                 (lambda events:
                     print(f"[PREPROC] Created standardized events shape: {events.shape}") or
-                    (events.write_parquet(get_output_filename(events_parquet)), print(f"[PREPROC] Event handling finished. Output: {get_output_filename(events_parquet)}"))
+                    (events.write_parquet(get_output_filename(events_parquet)) or print(f"[PREPROC] Event handling finished. Output: {get_output_filename(events_parquet)}"))
                 )(
                     df.with_columns([
                         (pl.col('onset') * float(sfreq)).cast(int).alias('onset_sample'),

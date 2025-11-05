@@ -1,4 +1,4 @@
-import polars as pl, numpy as np, neurokit2 as nk, sys, os
+import polars as pl, numpy as np, sys, os, neurokit2 as nk
 if __name__ == "__main__":
     usage = lambda: print("[PREPROC] Usage: python ecg_preprocessor.py <input_parquet> [sampling_rate]") or sys.exit(1)
     get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_ecg.parquet"

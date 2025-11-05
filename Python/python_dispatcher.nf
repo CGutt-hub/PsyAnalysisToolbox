@@ -7,7 +7,8 @@ process python_dispatcher {
         val input_file
         val script_args
     output:
-        path "*.parquet", emit: 'parquet', optional: true, type: 'file'
+        // Some scripts (e.g., git_sync) don't produce parquet files; make the output optional
+        path "*.parquet", emit: 'parquet', optional: true
     script:
         """
         ${python_exe} -u ${script_name} ${input_file} ${script_args}

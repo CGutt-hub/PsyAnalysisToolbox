@@ -1,43 +1,74 @@
-import sys, polars as pl, os, tempfile, shutil
-if __name__ == "__main__":
-    usage = lambda: print("[PROC] Usage: python extracting_processor.py <input_parquet> <col1> [col2] [col3] ... [colN]") or sys.exit(1)
-    get_column_selection = lambda df, spec: (
-        df.select(df.columns[int(spec.split(":")[0]) if spec.split(":")[0] else 0 :
-                           (len(df.columns) + int(spec.split(":")[1])) if spec.split(":")[1] and int(spec.split(":")[1]) < 0
-                           else (int(spec.split(":")[1]) if spec.split(":")[1] else len(df.columns))]) if ":" in spec
-        else df.select([spec]) if spec in df.columns
-        else None
-    )
-    run = lambda input_path, columns: (
-        (lambda df:
-            (lambda base:
-                (lambda temp_dir:
-                    print(f"[PROC] Using temp dir: {temp_dir}") or
-                    (
-                        [
-                            (lambda idx, col_spec:
-                                (lambda selected_df:
-                                    selected_df.write_parquet(os.path.join(temp_dir, f"{base}_extr{idx+1}.parquet")) if selected_df is not None
-                                    else print(f"[PROC] Warning: Column spec '{col_spec}' not found or invalid")
-                                )(get_column_selection(df, col_spec))
-                            )(idx, col_spec)
-                            for idx, col_spec in enumerate(columns)
-                        ]
-                    ) or (
-                        # Move all files from temp dir to current dir atomically
-                        [shutil.move(os.path.join(temp_dir, f), os.path.join(".", f)) for f in os.listdir(temp_dir) if f.endswith('.parquet')] or
-                        (lambda _: (shutil.rmtree(temp_dir), True))(None) or
-                        # write a tiny canonical signal parquet for dispatcher detection
-                        (lambda sig: (pl.DataFrame({'signal':[1], 'base':[base]}).write_parquet(sig), print(f"[PROC] Channel extraction completed. Base: {base}, Extracts: {len(columns)}")))(f"{base}_extr.parquet")
-                    )
-                )(tempfile.mkdtemp(prefix="extract_temp_", dir="."))
-            )(os.path.splitext(os.path.basename(input_path))[0])
-        )(pl.read_parquet(input_path))
-    )
+import polars as pl, sys, os
+
+# usage lambda
+usage = lambda: (print('[PROC] Usage: python extracting_processor.py <input_parquet> <selector1> [selector2 ...]') or sys.exit(1))
+
+get_output_filename = lambda base: f"{base}_extr.parquet"
+
+
+
+# Use lambdas for concise logic, named functions for multi-step logic
+def resolver(s, dcols):
+    if s is None or s == '':
+        return []
+    if ':' in s:
+        parts = s.split(':')
+        start = 0 if parts[0].strip() == '' else (int(parts[0].strip()) - 1 if not parts[0].strip().startswith('-') else len(dcols) + int(parts[0].strip()))
+        end = len(dcols) - 1 if (len(parts) <= 1 or parts[1].strip() == '') else (int(parts[1].strip()) - 1 if not parts[1].strip().startswith('-') else len(dcols) + int(parts[1].strip()))
+        return dcols[start:end+1] if start <= end else []
+    if s.lstrip('-').isdigit():
+        idx = int(s)
+        if 1 <= idx <= len(dcols):
+            return [dcols[idx - 1]]
+        if idx < 0 and abs(idx) <= len(dcols):
+            return [dcols[len(dcols) + idx]]
+    name = s.lower()
+    return ([c for c in dcols if c.lower() == name] or
+            [c for c in dcols if name in c.lower()] or
+            [c for c in dcols if c.lower().startswith(name)] or [])
+
+write_outputs = lambda df, selectors, base, out_folder: (
+    os.makedirs(out_folder, exist_ok=True) or sum([
+        (lambda sel_cols, idx, sel: (
+            (lambda out_df: (
+                out_df.write_parquet(os.path.join(out_folder, f"{base}_extr{idx+1}.parquet")) or
+                (print(f"[PROC] Wrote {base}_extr{idx+1}.parquet columns={out_df.columns}") or 1)
+            ))(
+                df.select(['time'] + sel_cols) if ('time' in df.columns and sel_cols) else (
+                    df.select(sel_cols) if sel_cols else pl.DataFrame({'time': df['time'].to_list(), 'empty': [0]*df.height})
+                )
+            )
+        ))(resolver(sel, (df.columns[1:] if df.columns and df.columns[0].lower() == 'time' else df.columns)), idx, sel)
+        for idx, sel in enumerate(selectors)
+    ], 0)
+)
+
+write_signal = lambda input_parquet, base, out_folder, writes_count: (
+    pl.DataFrame({'signal':[1], 'source':[os.path.basename(input_parquet)], 'streams':[writes_count]})
+        .write_parquet(os.path.join(out_folder, get_output_filename(base))) or
+    print(f"[PROC] Extraction finished. Wrote signal {os.path.join(out_folder, get_output_filename(base))} with {writes_count} streams")
+)
+
+run = lambda input_parquet, selectors: (
+    print(f"[PROC] Extracting started for: {input_parquet} selectors={selectors}") or
+    (lambda df:
+        (lambda base, out_folder:
+            (lambda writes_count:
+                write_signal(input_parquet, base, out_folder, writes_count)
+            )(write_outputs(df, selectors, base, out_folder))
+        )(os.path.splitext(os.path.basename(input_parquet))[0], os.path.join(os.path.dirname(input_parquet), f"{os.path.splitext(os.path.basename(input_parquet))[0]}_extr"))
+    )(pl.read_parquet(input_parquet))
+)
+
+if __name__ == '__main__':
     try:
         args = sys.argv
-        (lambda a: usage() if len(a) < 3 else run(a[1], a[2:]))(args)
+        if len(args) < 2:
+            usage()
+        else:
+            input_parquet = args[1]
+            selectors = args[2:] if len(args) > 2 else []
+            run(input_parquet, selectors)
     except Exception as e:
         print(f"[PROC] Error: {e}")
-        sys.exit(1)
         sys.exit(1)

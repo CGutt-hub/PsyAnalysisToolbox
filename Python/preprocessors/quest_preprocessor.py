@@ -1,136 +1,165 @@
-import polars as pl, sys, os
-if __name__ == "__main__":
-    usage = lambda: print("[PREPROC] Usage: python quest_preprocessor.py <input_parquet> <encoding> <output_dir> <trial_markers> <trigger_markers> <procedure_markers> <condition_markers> <positive_patterns> <negative_patterns> <neutral_patterns> <aggregate_within_conditions>") or sys.exit(1)
-    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_quest_preproc.parquet"
+import polars as pl, sys, os, re
+
+usage = lambda: print("[PREPROC] Usage: python quest_preprocessor.py <input_parquet.parquet> [level_key] [pair_delimiter] [key_value_delimiter]") or sys.exit(1)
+get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_quest.parquet"
+
+
+def preprocess_run(input_parquet, level_key='Level', key_value_delimiter=':'):
+    """
+    Transform flat key:value text lines into nested hierarchy structure.
     
-    run = lambda input_parquet, encoding, output_dir, trial_params: (
-        print(f"[PREPROC] Questionnaire preprocessor started for: {input_parquet}") or
-        print(f"[PREPROC] Using trial parameters: {trial_params}") or
-        (lambda df:
-            print(f"[PREPROC] Read DataFrame with shape: {df.shape}") or
-            print(f"[PREPROC] DataFrame columns: {df.columns}") or
-            (lambda text_lines:
-                print(f"[PREPROC] Extracted {len(text_lines)} text lines") or
-                (lambda questionnaire_data:
-                    print(f"[PREPROC] Extracted {len(questionnaire_data)} questionnaire entries") or
-                    (lambda result_df:
-                        print(f"[PREPROC] Created DataFrame with shape: {result_df.shape}") or
-                        print(f"[PREPROC] Sample keys: {result_df['key'].head(10).to_list() if result_df.shape[0] > 0 else 'None'}") or
-                        (lambda final_df:
-                            final_df.write_parquet(get_output_filename(input_parquet)) or
-                            print(f"[PREPROC] Questionnaire preprocessing finished. Output: {get_output_filename(input_parquet)}")
-                        )(
-                            # Apply within-condition aggregation if requested
-                            (lambda aggregated_data:
-                                print(f"[PREPROC] Applied within-condition aggregation: {trial_params['aggregate_within_conditions']}") or
-                                (aggregated_data if aggregated_data.shape[0] > 0 else result_df)
-                            )(
-                                # Within-condition aggregation using pure polars operations (no JSON)
-                                (lambda grouped_df:
-                                    grouped_df.group_by(['condition', 'key']).agg([
-                                        pl.col('value').cast(pl.Float64, strict=False).mean().alias('value_mean'),
-                                        pl.col('value').cast(pl.Float64, strict=False).std().alias('value_variance'),
-                                        pl.col('value').cast(pl.Float64, strict=False).count().alias('trial_count'),
-                                        pl.first('trial_number').alias('trial_number'),
-                                        pl.first('stimulus_file').alias('stimulus_file'),
-                                        pl.first('trigger').alias('trigger'),
-                                        pl.first('procedure').alias('procedure')
-                                    ]).with_columns([
-                                        (pl.col('key') + pl.lit('_aggregated')).alias('key'),
-                                        pl.col('value_mean').cast(pl.Utf8).alias('value'),
-                                        pl.col('value_variance').alias('variance')
-                                    ]).select(['key', 'value', 'variance', 'condition', 'trial_count', 'trial_number', 'stimulus_file', 'trigger', 'procedure'])
-                                )(result_df.filter(pl.col('condition').is_not_null())) if trial_params['aggregate_within_conditions'] and 'condition' in (result_df.columns if result_df.shape[0] > 0 else []) else pl.DataFrame()
-                            )
-                        )
-                    )(
-                        # Create DataFrame with dynamic columns based on available data
-                        pl.DataFrame(questionnaire_data) if questionnaire_data else pl.DataFrame({"key": [], "value": []})
-                    )
-                )(
-                    # Generic questionnaire data extraction with optional trial segmentation
-                    (lambda parsed_data:
-                        print(f"[PREPROC] Parsed {len(parsed_data)} questionnaire entries") or
-                        parsed_data
-                    )(
-                        # Parse text lines with optional trial context tracking
-                        (lambda questionnaire_entries:
-                            [entry for entry in questionnaire_entries if entry is not None]
-                        )(
-                            # Process lines with configurable trial context
-                            (lambda trial_context, tp: [
-                                (lambda parts, trial_info: (
-                                    # Configurable trial context detection (fully generic)
-                                    any(marker in parts[0].strip().lower() for marker in tp['trial_markers']) and parts[1].strip().isdigit() and trial_info.update({"trial_number": parts[1].strip()}) or
-                                    any(marker in parts[0].strip().lower() for marker in tp['trigger_markers']) and parts[1].strip().isdigit() and trial_info.update({"trigger": parts[1].strip()}) or
-                                    any(marker in parts[0].strip().lower() for marker in tp['procedure_markers']) and trial_info.update({"procedure": parts[1].strip()}) or
-                                    # Configurable condition detection from pipeline patterns
-                                    any(cond in parts[0].lower() for cond in tp['condition_markers']) and trial_info.update({
-                                        "condition": (
-                                            "positive" if any(pos in parts[1].upper() for pos in tp['positive_patterns']) else
-                                            "negative" if any(neg in parts[1].upper() for neg in tp['negative_patterns']) else
-                                            "neutral" if any(neu in parts[1].upper() for neu in tp['neutral_patterns']) else
-                                            parts[1].strip()
-                                        ),
-                                        "stimulus_file": parts[1].strip()
-                                    }) or
-                                    # Return questionnaire data with trial context (if available)
-                                    (
-                                        any(quest in parts[0].lower() for quest in ['panas', 'bis', 'bas', 'sam', 'ea11', 'be7']) or
-                                        any(pattern in parts[0].lower() for pattern in ['response', 'answer', 'rating', 'score', 'resp', 'choice', 'word']) or
-                                        any(pattern in parts[0].lower() for pattern in ['rt', 'acc', 'onset', 'duration']) or
-                                        any(pattern in parts[0].lower() for pattern in ['leftscale', 'rightscale', 'scale']) or
-                                        # Include any key-value pair for maximum compatibility
-                                        True
-                                    ) and {
-                                        "key": parts[0].strip(), 
-                                        "value": parts[1].strip(),
-                                        # Optional trial context (only added if detected)
-                                        **({"trial_number": trial_info.get("trial_number")} if trial_info.get("trial_number") else {}),
-                                        **({"condition": trial_info.get("condition")} if trial_info.get("condition") else {}),
-                                        **({"stimulus_file": trial_info.get("stimulus_file")} if trial_info.get("stimulus_file") else {}),
-                                        **({"trigger": trial_info.get("trigger")} if trial_info.get("trigger") else {}),
-                                        **({"procedure": trial_info.get("procedure")} if trial_info.get("procedure") else {})
-                                    }
-                                ))(line.split(':', 1), trial_context) if ':' in line and len(line.split(':', 1)) == 2 else None
-                                for line in text_lines
-                                if line is not None and isinstance(line, str) and not line.strip().startswith('***') and not line.strip().endswith('***')
-                            ])(
-                                {}, 
-                                trial_params
-                            ))
-                    )
-                )
-            )(
-                # Extract text lines from the polars DataFrame, filtering out None values
-                [str(item) for item in df.to_series(0).to_list() if item is not None] if df.shape[0] > 0 else []
-            )
-        )(pl.read_parquet(input_parquet))
-    )
+    Steps:
+    1. Parquet → Polars: Load parquet and extract text column
+    2. Parse to (key, value) tuples: Split by delimiter, drop invalid lines
+    3. Group by level: Nest based on level markers
+    4. Handle recursion: Duplicate keys create new dicts in list
+    5. Polars → Parquet: Write output
+    """
+    print(f"[PREPROC] Questionnaire preprocessor started for: {input_parquet}")
     
+    # Step 1: Parquet → Polars
+    df = pl.read_parquet(input_parquet)
+    print(f"[PREPROC] Read DataFrame with shape: {df.shape}")
+    
+    # Extract text column
+    if 'text' in df.columns:
+        lines = df['text'].to_list()
+    elif 'line' in df.columns:
+        lines = df['line'].to_list()
+    else:
+        lines = df.to_series(0).to_list()
+    
+    lines = [str(line).strip() for line in lines if line is not None and str(line).strip()]
+    print(f"[PREPROC] Extracted {len(lines)} text lines")
+    
+    # Step 2: Parse to (key, value) tuples (all strings)
+    level_pattern = re.compile(rf'^\s*{re.escape(level_key)}\s*{re.escape(key_value_delimiter)}\s*(\d+)\s*$', re.IGNORECASE)
+    
+    parsed_entries = []
+    for line in lines:
+        # Check if it's a level marker
+        match = level_pattern.match(line)
+        if match:
+            parsed_entries.append((level_key, match.group(1)))  # Store level as string
+            continue
+        
+        # Try to split by delimiter
+        if key_value_delimiter in line:
+            key, value = line.split(key_value_delimiter, 1)
+            parsed_entries.append((key.strip(), value.strip()))
+        else:
+            print(f"[PREPROC] Dropping non key:value line: '{line}'")
+    
+    print(f"[PREPROC] Parsed {len(parsed_entries)} key:value entries")
+    
+    # Steps 3 & 4: Group by level with nesting and recursion handling
+    def build_hierarchy(entries):
+        """
+        Build nested hierarchy with level-based nesting and recursion handling.
+        Returns list of dicts (outermost is always a list).
+        """
+        if not entries:
+            return []
+        
+        result = []
+        stack = [(0, result)]  # (level_num, current_list)
+        current_dict = {}
+        current_level = 0
+        
+        for key, value in entries:
+            if key == level_key:
+                # Level marker - determines nesting depth
+                new_level = int(value)
+                
+                # Save current dict BEFORE changing levels
+                if current_dict:
+                    stack[-1][1].append(current_dict)
+                
+                # Pop stack until we're at the right parent level
+                while len(stack) > 1 and stack[-1][0] >= new_level:
+                    stack.pop()
+                
+                # If level increases, create _branch in last dict of parent level
+                if new_level > stack[-1][0]:
+                    parent_list = stack[-1][1]
+                    if parent_list:
+                        # Nest under last dict in parent
+                        if '_branch' not in parent_list[-1]:
+                            parent_list[-1]['_branch'] = []
+                        stack.append((new_level, parent_list[-1]['_branch']))
+                    else:
+                        # Empty parent list - shouldn't happen but handle it
+                        stack.append((new_level, parent_list))
+                
+                # Start new dict with Level key
+                current_dict = {level_key: value}
+                current_level = new_level
+                
+            else:
+                # Regular key:value pair
+                # Handle recursion: if key exists, save dict and start new
+                if key in current_dict:
+                    stack[-1][1].append(current_dict)
+                    current_dict = {key: value}
+                else:
+                    current_dict[key] = value
+        
+        # Append last dict if it exists
+        if current_dict:
+            stack[-1][1].append(current_dict)
+        
+        return result
+    
+    hierarchy_list = build_hierarchy(parsed_entries)
+    
+    print(f"[PREPROC] Built hierarchy with {len(hierarchy_list)} top-level entries")
+    
+    # DEBUG: Show first entry before Polars
+    if hierarchy_list:
+        import json
+        print("[DEBUG] First entry before Polars:")
+        print(json.dumps(hierarchy_list[0], indent=2))
+    
+    # Step 5: Polars → Parquet
+    output_name = get_output_filename(input_parquet)
+    output_df = pl.DataFrame({
+        'hierarchy': [{'level': hierarchy_list}]
+    })
+    output_df.write_parquet(output_name)
+    
+    print(f"[PREPROC] Questionnaire preprocessing finished. Output: {output_name}")
+    return output_name
+
+
+
+if __name__ == '__main__':
     try:
         args = sys.argv
-        if len(args) < 4:
+        if len(args) < 2:
             usage()
         else:
-            input_parquet = args[1]
-            encoding = args[2]  # Not used anymore but kept for compatibility
-            output_dir = args[3]
-            # Parse trial detection parameters from pipeline (fully generic)
-            if len(args) < 12:
-                print(f"[PREPROC] ERROR: Missing parameters. Expected 11 arguments, got {len(args)-1}")
-                usage()
-            trial_params = {
-                'trial_markers': args[4].split(','),
-                'trigger_markers': args[5].split(','), 
-                'procedure_markers': args[6].split(','),
-                'condition_markers': args[7].split(','),
-                'positive_patterns': args[8].split(','),
-                'negative_patterns': args[9].split(','),
-                'neutral_patterns': args[10].split(','),
-                'aggregate_within_conditions': args[11].lower() == 'true'
-            }
-            run(input_parquet, encoding, output_dir, trial_params)
+            input_file = args[1]
+            # Pipeline passes: <level_key> . <key_value_delimiter>
+            # Accept flexible positions and ignore '.' placeholders
+            extra = [a for a in args[2:] if a != '.']
+            level_key = extra[0] if len(extra) >= 1 else 'Level'
+            kv_delimiter = extra[1] if len(extra) >= 2 else ':'
+            
+            try:
+                preprocess_run(input_file, level_key=level_key, key_value_delimiter=kv_delimiter)
+            except Exception as e:
+                # On error, write diagnostic parquet
+                out_name = get_output_filename(input_file) if input_file else 'failed_quest.parquet'
+                try:
+                    print(f"[PREPROC] ERROR: {e}")
+                    safe_hierarchy = {level_key.lower(): []}
+                    err_df = pl.DataFrame({'hierarchy': [safe_hierarchy], 'error': [str(e)]})
+                    err_df.write_parquet(out_name)
+                    print(f"[PREPROC] Wrote diagnostic output to {out_name}")
+                    sys.exit(1)
+                except Exception as ee:
+                    print(f"[PREPROC] FATAL: Could not write diagnostic parquet: {ee}")
+                    sys.exit(2)
     except Exception as e:
-        print(f"[PREPROC] Error: {e}")
+        print(f"[PREPROC] ERROR: {e}")
         sys.exit(1)

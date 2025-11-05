@@ -1,32 +1,64 @@
-import pyxdf, polars as pl, sys, os, tempfile
+import pyxdf, polars as pl, sys, os
 if __name__ == "__main__":
+    # 1) usage lambda
     usage = lambda: print("[READER] Usage: python xdf_reader.py <input_xdf> <output_dir>") or sys.exit(1)
-    get_output_filename = lambda base, idx: f"{base}_xdf{idx+1}.parquet"
+
+    # 2) signal output filename lambda (top-level signalling parquet)
+    get_signal_filename = lambda base: f"{base}_xdf.parquet"
+
+    # 3) run: inline nested lambda that processes streams and writes per-stream parquets
     run = lambda input_xdf, output_dir: (
         print(f"[READER] Started for: {input_xdf}") or
-        (lambda streams:
+        (lambda streams: (
             print(f"[READER] Loading XDF file: {input_xdf}") or
             (len(streams) > 0 and (
                 print(f"[READER] Found {len(streams)} streams.") or
-                [
-                    (lambda idx, stream:
-                        print(f"[READER] Processing stream {idx+1}/{len(streams)}: '{stream['info']['name'][0] if 'name' in stream['info'] and len(stream['info']['name']) > 0 else 'Unknown'}'") or
-                        (lambda df:
-                            (lambda temp_file:
-                                    df.write_parquet(temp_file) or
-                                    os.rename(temp_file, get_output_filename(os.path.splitext(os.path.basename(input_xdf))[0], idx)) or
-                                    print(f"[READER] Parquet file saved: {get_output_filename(os.path.splitext(os.path.basename(input_xdf))[0], idx)} with shape {df.shape}") or
-                                    # write a tiny signal parquet to indicate completion
-                                    (lambda sig: (pl.DataFrame({'signal':[1], 'stream_idx':[idx]}).write_parquet(sig), sig))(get_output_filename(os.path.splitext(os.path.basename(input_xdf))[0], idx).replace('.parquet', '_signal.parquet'))
-                            )(tempfile.mktemp(suffix='.parquet', prefix=f"xdf_temp_{idx}_", dir="."))
-                        )(pl.DataFrame(stream['time_series']) if len(stream['time_series']) > 0 else pl.DataFrame([]))
-                    )(idx, stream)
-                    for idx, stream in enumerate(streams)
-                ] or
-                (lambda sig: (pl.DataFrame({'signal':[1], 'source':[os.path.basename(input_xdf)]}).write_parquet(sig), print(f"[READER] Reading finished. Files created in current directory")))(os.path.splitext(os.path.basename(input_xdf))[0] + '_xdf.parquet')
-            ) or print(f"[READER] No streams found in XDF file: {input_xdf}"))
-        )(pyxdf.load_xdf(input_xdf)[0])
+                (lambda base: (
+                    os.makedirs(os.path.join(output_dir, f"{base}_xdf"), exist_ok=True) or
+                    ([
+                        (lambda idx, stream: (
+                            (lambda info: (
+                                (lambda name: (
+                                    print(f"[READER] Processing stream {idx+1}/{len(streams)}: '{name}'") or
+                                    (lambda df: (
+                                        df.write_parquet(os.path.join(output_dir, f"{base}_xdf", f"{base}_xdf{idx+1}.parquet")) or
+                                        print(f"[READER] Parquet file saved: {base}_xdf{idx+1}.parquet with shape {df.shape}")
+                                    ))(pl.DataFrame(stream.get('time_series', [])))
+                                ))(
+                                    (
+                                        (lambda info:
+                                            (lambda info0:
+                                                (
+                                                    (next(iter(info0.get('name') or []), 'Unknown') if isinstance(info0, dict) else 'Unknown')
+                                                    if isinstance(info0, dict) and info0.get('name') is not None
+                                                    else (
+                                                        info0.get('name')
+                                                        if isinstance(info0, dict) and isinstance(info0.get('name', None), str) and info0.get('name')
+                                                        else 'Unknown'
+                                                    )
+                                                )
+                                            )(info[0] if isinstance(info, list) and info else (info if isinstance(info, dict) else {}))
+                                        )(stream.get('info', {}))
+                                    )
+                                )
+                            ))(stream.get('info', {}))
+                        ))(idx, stream)
+                        for idx, stream in enumerate(streams)
+                    ]) and (
+                        os.makedirs(output_dir, exist_ok=True) or
+                        pl.DataFrame({'signal':[1], 'source':[os.path.basename(input_xdf)], 'streams':[len(streams)]}).write_parquet(os.path.join(output_dir, get_signal_filename(base))) or
+                        print(f"[READER] Reading finished. Files created in {output_dir}")
+                    )
+                ))(os.path.splitext(os.path.basename(input_xdf))[0])
+            )) or (
+                # no streams: still write a top-level empty signal file
+                os.makedirs(output_dir, exist_ok=True) or
+                pl.DataFrame({'signal':[1], 'source':[os.path.basename(input_xdf)], 'streams':[0]}).write_parquet(os.path.join(output_dir, get_signal_filename(os.path.splitext(os.path.basename(input_xdf))[0]))) or
+                print(f"[READER] No streams found in XDF file: {input_xdf}")
+            )
+        ))(pyxdf.load_xdf(input_xdf)[0])
     )
+
     try:
         args = sys.argv
         if len(args) < 3:
@@ -38,3 +70,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[READER] Error: {e}")
         sys.exit(1)
+
