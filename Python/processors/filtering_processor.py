@@ -1,64 +1,32 @@
-import polars as pl, numpy as np, sys, os
-from scipy.signal import butter, filtfilt
-if __name__ == "__main__":
-    usage = lambda: print("[PROC] Usage: python filtering_processor.py <input_parquet> <filter_type> <frequencies> <sampling_freq> <data_columns>") or sys.exit(1)
-    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_filtered.parquet"
-    
-    run = lambda input_parquet, filter_type, frequencies, sampling_freq, data_columns: (
-        print(f"[PROC] Generic filtering started for: {input_parquet}") or
-        (lambda df:
-            (lambda fs:
-                (lambda freq_list: 
-                    (lambda column_list:
-                        (lambda filtered_df:
-                            (filtered_df.write_parquet(get_output_filename(input_parquet)),
-                             print(f"[PROC] Generic filtering finished. Output: {get_output_filename(input_parquet)}"))
-                        )(
-                            # Apply filtering to each specified data column
-                            df.with_columns([
-                                pl.col(col).map_elements(
-                                    lambda signal_series: (
-                                        (lambda signal_array:
-                                            (lambda butter_params:
-                                                (lambda b, a:
-                                                    filtfilt(b, a, signal_array) if isinstance(b, np.ndarray) and isinstance(a, np.ndarray) else signal_array
-                                                )(butter_params[0], butter_params[1]) if butter_params is not None else signal_array
-                                            )(
-                                                # Generic butter filter configuration
-                                                (lambda ftype, freqs, fs:
-                                                    butter(2, freqs, btype=ftype, fs=fs) if (
-                                                        ftype == 'low' and len(freqs) == 1 and 0 < freqs[0] < fs/2
-                                                    ) or (
-                                                        ftype == 'high' and len(freqs) == 1 and 0 < freqs[0] < fs/2  
-                                                    ) or (
-                                                        ftype == 'band' and len(freqs) == 2 and 0 < freqs[0] < freqs[1] < fs/2
-                                                    ) or (
-                                                        ftype == 'bandstop' and len(freqs) == 2 and 0 < freqs[0] < freqs[1] < fs/2
-                                                    ) else None
-                                                )(filter_type, freq_list, fs)
-                                            )
-                                        )(np.asarray(signal_series.to_list(), dtype=np.float64) if hasattr(signal_series, 'to_list') else np.asarray([signal_series], dtype=np.float64))
-                                    ),
-                                    return_dtype=pl.List(pl.Float64)
-                                ).alias(f"{col}_filtered") for col in column_list
-                            ])
-                        )
-                    )(data_columns.split(',') if isinstance(data_columns, str) else data_columns)
-                )(
-                    # Parse frequency parameters based on filter type
-                    [float(f) for f in frequencies.split(',')] if isinstance(frequencies, str) else frequencies
-                )
-            )(float(sampling_freq))
-        )(pl.read_parquet(input_parquet))
-    )
-    
-    try:
-        args = sys.argv
-        if len(args) < 6:
-            usage()
-        else:
-            input_parquet, filter_type, frequencies, sampling_freq, data_columns = args[1], args[2], args[3], args[4], args[5]
-            run(input_parquet, filter_type, frequencies, sampling_freq, data_columns)
-    except Exception as e:
-        print(f"[PROC] Error: {e}")
-        sys.exit(1)
+import polars as pl, numpy as np, sys, scipy.signal, os
+from typing import cast
+from numpy.typing import NDArray
+
+def bandpass(sig: NDArray[np.float64], lf: float, hf: float, fs: float, order: int = 2) -> NDArray[np.float64]:
+    if not (0 < lf < hf < fs/2): return sig
+    sos = scipy.signal.butter(order, [lf, hf], btype='band', fs=fs, output='sos')
+    return cast(NDArray[np.float64], scipy.signal.sosfiltfilt(sos, sig))
+
+def lowpass(sig: NDArray[np.float64], hf: float, fs: float, order: int = 2) -> NDArray[np.float64]:
+    if not (0 < hf < fs/2): return sig
+    sos = scipy.signal.butter(order, hf, btype='low', fs=fs, output='sos')
+    return cast(NDArray[np.float64], scipy.signal.sosfiltfilt(sos, sig))
+
+def highpass(sig: NDArray[np.float64], lf: float, fs: float, order: int = 2) -> NDArray[np.float64]:
+    if not (0 < lf < fs/2): return sig
+    sos = scipy.signal.butter(order, lf, btype='high', fs=fs, output='sos')
+    return cast(NDArray[np.float64], scipy.signal.sosfiltfilt(sos, sig))
+
+def filter_signal(ip: str, col: str, lf: str, hf: str, fs: float = 1000.0, ftype: str = 'bandpass', out: str | None = None) -> str:
+    print(f"[PROC] Filtering: {ip}"); df = pl.read_parquet(ip)
+    target = next((c for c in df.columns if col.lower() in c.lower()), None)
+    if not target: print(f"[PROC] Error: Column '{col}' not found"); sys.exit(1)
+    sig: NDArray[np.float64] = df[target].to_numpy()
+    print(f"[PROC] {ftype} filter on {target}: {len(sig)} samples")
+    filtered = bandpass(sig, float(lf), float(hf), float(fs)) if ftype == 'bandpass' else lowpass(sig, float(hf), float(fs)) if ftype == 'lowpass' else highpass(sig, float(lf), float(fs))
+    result = pl.DataFrame({'time': df['time'] if 'time' in df.columns else np.arange(len(filtered))/float(fs), target.lower(): filtered, 'sfreq': [float(fs)]*len(filtered)})
+    base = os.path.splitext(os.path.basename(ip))[0]
+    out_file = f"{base}_filt.parquet"
+    result.write_parquet(out_file); print(f"[PROC] Output: {out_file}"); return out_file
+
+if __name__ == '__main__': (lambda a: filter_signal(a[1], a[2], a[3], a[4], float(a[5]) if len(a) > 5 else 1000.0, a[6] if len(a) > 6 else 'bandpass') if len(a) >= 5 else (print("[PROC] Usage: python filtering_processor.py <input.parquet> <column> <l_freq> <h_freq> [fs] [ftype]"), sys.exit(1)))(sys.argv)
