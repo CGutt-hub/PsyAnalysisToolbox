@@ -1,6 +1,10 @@
-import polars as pl, numpy as np, sys, scipy.signal, os
+import polars as pl, numpy as np, sys, scipy.signal, os, warnings
 from typing import cast
 from numpy.typing import NDArray
+import mne
+
+# Suppress MNE naming convention warnings
+warnings.filterwarnings('ignore', message='.*does not conform to MNE naming conventions.*')
 
 def bandpass(sig: NDArray[np.float64], lf: float, hf: float, fs: float, order: int = 2) -> NDArray[np.float64]:
     if not (0 < lf < hf < fs/2): return sig
@@ -17,8 +21,24 @@ def highpass(sig: NDArray[np.float64], lf: float, fs: float, order: int = 2) -> 
     sos = scipy.signal.butter(order, lf, btype='high', fs=fs, output='sos')
     return cast(NDArray[np.float64], scipy.signal.sosfiltfilt(sos, sig))
 
-def filter_signal(ip: str, col: str, lf: str, hf: str, fs: float = 1000.0, ftype: str = 'bandpass', out: str | None = None) -> str:
-    print(f"[PROC] Filtering: {ip}"); df = pl.read_parquet(ip)
+def filter_signal(ip: str, col: str | None, lf: str, hf: str, fs: float = 1000.0, ftype: str = 'bandpass', out: str | None = None) -> str:
+    print(f"[PROC] Filtering: {ip}")
+    
+    # Handle MNE .fif files for multi-channel EEG/fNIRS
+    if ip.endswith('.fif'):
+        raw = mne.io.read_raw_fif(ip, preload=True, verbose=False)
+        print(f"[PROC] {ftype} filter on {len(raw.ch_names)} channels: {float(lf)}-{float(hf)} Hz")
+        raw.filter(float(lf), float(hf), verbose=False)
+        # Save in current working directory
+        base = os.path.splitext(os.path.basename(ip))[0]
+        out_file = out or f"{base}_filt.fif"
+        raw.save(out_file, overwrite=True, verbose=False)
+        print(f"[PROC] Output (MNE Raw): {out_file}")
+        return out_file
+    
+    # Handle Polars parquet files for single-channel signals
+    df = pl.read_parquet(ip)
+    if not col: print(f"[PROC] Error: Column name required for parquet files"); sys.exit(1)
     target = next((c for c in df.columns if col.lower() in c.lower()), None)
     if not target: print(f"[PROC] Error: Column '{col}' not found"); sys.exit(1)
     sig: NDArray[np.float64] = df[target].to_numpy()
@@ -29,4 +49,21 @@ def filter_signal(ip: str, col: str, lf: str, hf: str, fs: float = 1000.0, ftype
     out_file = f"{base}_filt.parquet"
     result.write_parquet(out_file); print(f"[PROC] Output: {out_file}"); return out_file
 
-if __name__ == '__main__': (lambda a: filter_signal(a[1], a[2], a[3], a[4], float(a[5]) if len(a) > 5 else 1000.0, a[6] if len(a) > 6 else 'bandpass') if len(a) >= 5 else (print("[PROC] Usage: python filtering_processor.py <input.parquet> <column> <l_freq> <h_freq> [fs] [ftype]"), sys.exit(1)))(sys.argv)
+if __name__ == '__main__': 
+    args = sys.argv
+    if len(args) < 4:
+        print("[PROC] Usage: python filtering_processor.py <input> <l_freq> <h_freq> [column] [fs] [ftype]")
+        print("[PROC]   For .fif: python filtering_processor.py <input.fif> <l_freq> <h_freq>")
+        print("[PROC]   For .parquet: python filtering_processor.py <input.parquet> <l_freq> <h_freq> <column> [fs]")
+        sys.exit(1)
+    
+    # Parse arguments based on file type
+    if args[1].endswith('.fif'):
+        # .fif files: input, l_freq, h_freq, [output]
+        filter_signal(args[1], None, args[2], args[3], out=args[4] if len(args) > 4 else None)
+    else:
+        # .parquet files: input, l_freq, h_freq, column, [fs], [ftype]
+        col = args[4] if len(args) > 4 else None
+        fs = float(args[5]) if len(args) > 5 else 1000.0
+        ftype = args[6] if len(args) > 6 else 'bandpass'
+        filter_signal(args[1], col, args[2], args[3], fs, ftype)

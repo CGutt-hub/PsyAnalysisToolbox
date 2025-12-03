@@ -1,6 +1,7 @@
-import polars as pl, numpy as np, sys, mne
-from typing import cast
-from numpy.typing import NDArray
+import polars as pl, numpy as np, sys, mne, os, warnings
+
+# Suppress MNE naming convention warnings
+warnings.filterwarnings('ignore', message='.*does not conform to MNE naming conventions.*')
 
 def apply_reference(ip: str, ref: str = 'average', out: str | None = None) -> str:
     print(f"[PROC] Referencing: {ip}"); df = pl.read_parquet(ip)
@@ -15,8 +16,9 @@ def apply_reference(ip: str, ref: str = 'average', out: str | None = None) -> st
     raw = mne.io.RawArray(data, info, verbose=False)
     raw.set_eeg_reference(ref, verbose=False)
     
-    # Keep in MNE format - save as .fif
-    out_file = out or f"{ip.replace('.parquet', '')}_reref.fif"
+    # Keep in MNE format - save as .fif in current working directory
+    base = os.path.splitext(os.path.basename(ip))[0]
+    out_file = out or f"{base}_reref.fif"
     raw.save(out_file, overwrite=True, verbose=False)
     print(f"[PROC] Output (MNE Raw): {out_file}")
     return out_file

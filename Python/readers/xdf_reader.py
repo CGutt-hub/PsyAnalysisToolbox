@@ -1,4 +1,7 @@
-import pyxdf, polars as pl, sys, os, numpy as np
+import pyxdf, polars as pl, sys, os, numpy as np, mne, warnings
+
+# Suppress MNE naming convention warnings
+warnings.filterwarnings('ignore', message='.*does not conform to MNE naming conventions.*')
 
 def get_ch_names(stream):
     info = stream.get('info', {})
@@ -15,7 +18,39 @@ def get_ch_names(stream):
         return [ch.get('label', [f'col{i}'])[0] if isinstance(ch.get('label'), list) else ch.get('label', f'col{i}') for i, ch in enumerate(ch_list)]
     return [ch_list.get('label', ['col0'])[0] if isinstance(ch_list.get('label'), list) else ch_list.get('label', 'col0')]
 
+def get_stream_type(stream):
+    info = stream.get('info', {})
+    return info.get('type', [None])[0] if isinstance(info.get('type'), list) else info.get('type', None)
+
 make_df = lambda s: (lambda ts, data, names: pl.DataFrame({'time': ts, **{names[j]: data[:, j] for j in range(len(names))}}) if names and len(ts) > 0 else pl.DataFrame({'time': ts, **{f'column_{j}': data[:, j] for j in range(data.shape[1] if hasattr(data, 'shape') else (len(data[0]) if len(data) > 0 else 0))}}) if len(ts) > 0 else pl.DataFrame({'time': [], 'empty': []}))(s.get('time_stamps', []), np.array(s.get('time_series', [])), get_ch_names(s))
+
+def save_as_mne(stream, out_path, stream_type):
+    """Save stream as MNE .fif file for EEG/NIRS/fNIRS data"""
+    ts = stream.get('time_stamps', [])
+    data = np.array(stream.get('time_series', []))
+    ch_names = get_ch_names(stream)
+    
+    if len(ts) == 0 or data.shape[0] == 0 or not ch_names or len(ch_names) == 0:
+        return False
+    
+    # Determine channel type
+    if stream_type in ['NIRS', 'fNIRS']:
+        ch_type = 'fnirs_cw_amplitude'  # fNIRS continuous wave amplitude
+    elif stream_type == 'EEG':
+        ch_type = 'eeg'
+    else:
+        ch_type = 'misc'
+    
+    # Calculate sampling frequency
+    sfreq = float(stream.get('info', {}).get('nominal_srate', [1.0])[0] if isinstance(stream.get('info', {}).get('nominal_srate'), list) else stream.get('info', {}).get('nominal_srate', 1.0))
+    
+    # Create MNE info and Raw object
+    info = mne.create_info(ch_names, sfreq, ch_types=ch_type)
+    raw = mne.io.RawArray(data.T, info, verbose=False)
+    
+    # Save as .fif
+    raw.save(out_path, overwrite=True, verbose=False)
+    return True
 
 def read_xdf(ip):
     print(f"[READER] Loading: {ip}")
@@ -24,11 +59,27 @@ def read_xdf(ip):
     workspace_root = os.getcwd()
     out_folder = os.path.join(workspace_root, f"{base}_xdf")
     os.makedirs(out_folder, exist_ok=True)
+    
     for i, s in enumerate(streams):
-        df = make_df(s)
-        out_path = os.path.join(out_folder, f"{base}_xdf{i+1}.parquet")
-        df.write_parquet(out_path)
-        print(f"[READER] Stream {i+1}/{len(streams)}: {df.shape}")
+        stream_type = get_stream_type(s)
+        
+        # Save as MNE .fif for EEG/NIRS streams, otherwise parquet
+        if stream_type in ['EEG', 'NIRS', 'fNIRS']:
+            out_path = os.path.join(out_folder, f"{base}_xdf{i+1}.fif")
+            success = save_as_mne(s, out_path, stream_type)
+            if success:
+                ch_names = get_ch_names(s)
+                n_samples = len(s.get('time_stamps', []))
+                n_channels = len(ch_names) if ch_names else 0
+                print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): {n_samples} samples, {n_channels} channels -> .fif")
+            else:
+                print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): Empty, skipped")
+        else:
+            df = make_df(s)
+            out_path = os.path.join(out_folder, f"{base}_xdf{i+1}.parquet")
+            df.write_parquet(out_path)
+            print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): {df.shape} -> .parquet")
+    
     signal_path = os.path.join(workspace_root, f"{base}_xdf.parquet")
     pl.DataFrame({'signal': [1], 'source': [os.path.basename(ip)], 'streams': [len(streams)]}).write_parquet(signal_path)
     print(f"[READER] Output: {signal_path}")
