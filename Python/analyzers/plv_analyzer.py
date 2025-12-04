@@ -1,117 +1,180 @@
-import polars as pl, numpy as np, sys, os
-from scipy.signal import hilbert
-if __name__ == "__main__":
-    usage = lambda: print("Usage: python plv_analyzer.py <input_parquet>") or sys.exit(1)
-    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_plv.parquet"
-    run = lambda input_parquet: (
-        print(f"[PLV] PLV analysis started for input: {input_parquet}") or (
-            # Adaptive PLV: Pairwise for 2 channels, Multi-channel for >2 channels
-            (lambda df:
-                (lambda results:
-                    pl.DataFrame(results).write_parquet(get_output_filename(input_parquet)) or
-                    print(f"[PLV] PLV analysis finished for input: {input_parquet}")
-                )(
-                    # Lambda: calculate multi-channel PLV for all channels together
-                    (lambda channels:
-                        (lambda signals:
-                            (lambda analytic_signals:
-                                (lambda phases:
-                                    # If only 2 channels: pairwise PLV + temporal dynamics
-                                    (lambda overall_plv, temporal_plv: [{
-                                        'channel1': channels[0],
-                                        'channel2': channels[1],
-                                        'plv_value': float(overall_plv),
-                                        'analysis_type': 'overall',
-                                        'plot_type': 'bar',
-                                        'x_scale': 'ordinal',
-                                        'y_scale': 'nominal',
-                                        'x_data': f"{channels[0]}-{channels[1]}",
-                                        'y_data': float(overall_plv),
-                                        'y_label': 'PLV (0-1)',
-                                        'plot_weight': 1,
-                                        'data_type': 'analysis_result'
-                                    }] + temporal_plv)(
-                                        # Overall PLV (original)
-                                        np.abs(np.mean(np.exp(1j * (phases[0] - phases[1])))),
-                                        # Temporal dynamics PLV (sliding window - as per proposal)
-                                        (lambda window_size: [
-                                            {
-                                                'channel1': channels[0],
-                                                'channel2': channels[1],
-                                                'plv_value': float(np.abs(np.mean(np.exp(1j * (phases[0][i:i+window_size] - phases[1][i:i+window_size]))))),
-                                                'analysis_type': 'temporal',
-                                                'time_window': i,
-                                                'window_center_time': i + window_size//2,
-                                                'plot_type': 'line',
-                                                'x_scale': 'continuous',
-                                                'y_scale': 'continuous',
-                                                'x_data': i + window_size//2,
-                                                'y_data': float(np.abs(np.mean(np.exp(1j * (phases[0][i:i+window_size] - phases[1][i:i+window_size]))))),
-                                                'y_label': 'PLV (0-1)',
-                                                'plot_weight': 0.5,
-                                                'data_type': 'temporal_dynamics'
-                                            }
-                                            for i in range(0, len(phases[0]) - window_size + 1, window_size//4)  # 75% overlap
-                                        ] if len(phases[0]) > window_size else [])(
-                                            min(len(phases[0])//4, 250)  # Window size: 1/4 of signal or max 250 samples
-                                        )
-                                    ) if len(channels) == 2 else
-                                    # If >2 channels: multi-channel PLV + temporal dynamics
-                                    (lambda overall_plv, temporal_plv: [{
-                                        'channels': '_'.join(channels),
-                                        'num_channels': len(channels),
-                                        'plv_value': float(overall_plv),
-                                        'analysis_type': 'overall',
-                                        'plot_type': 'bar',
-                                        'x_scale': 'ordinal',
-                                        'y_scale': 'nominal',
-                                        'x_data': f"{len(channels)}_channel_PLV",
-                                        'y_data': float(overall_plv),
-                                        'y_label': 'Multi-Channel PLV (0-1)',
-                                        'plot_weight': 1,
-                                        'data_type': 'analysis_result'
-                                    }] + temporal_plv)(
-                                        # Overall multi-channel PLV (original)
-                                        np.abs(np.mean(np.exp(1j * (phases - np.mean(phases, axis=0)).mean(axis=0)))),
-                                        # Temporal dynamics for multi-channel (sliding window)
-                                        (lambda window_size: [
-                                            {
-                                                'channels': '_'.join(channels),
-                                                'num_channels': len(channels),
-                                                'plv_value': float(np.abs(np.mean(np.exp(1j * (phases[:, i:i+window_size] - np.mean(phases[:, i:i+window_size], axis=0)).mean(axis=0))))),
-                                                'analysis_type': 'temporal',
-                                                'time_window': i,
-                                                'window_center_time': i + window_size//2,
-                                                'plot_type': 'line',
-                                                'x_scale': 'continuous',
-                                                'y_scale': 'continuous',
-                                                'x_data': i + window_size//2,
-                                                'y_data': float(np.abs(np.mean(np.exp(1j * (phases[:, i:i+window_size] - np.mean(phases[:, i:i+window_size], axis=0)).mean(axis=0))))),
-                                                'y_label': 'Multi-Channel PLV (0-1)',
-                                                'plot_weight': 0.5,
-                                                'data_type': 'temporal_dynamics'
-                                            }
-                                            for i in range(0, phases.shape[1] - window_size + 1, window_size//4)  # 75% overlap
-                                        ] if phases.shape[1] > window_size else [])(
-                                            min(phases.shape[1]//4, 250)  # Window size: 1/4 of signal or max 250 samples
-                                        )
-                                    )
-                                )(np.array([np.angle(np.asarray(sig, dtype=complex)) for sig in analytic_signals]))
-                            )([hilbert(sig) for sig in signals])
-                        )([df[ch].to_numpy() for ch in channels])
-                    )([ch for ch in df.columns if ch not in ['time', 'sfreq', 'data_type']])
-                )
-            )(pl.read_parquet(input_parquet))
-        )
-    )
+import polars as pl, numpy as np, sys, os, ast
+from scipy.signal import hilbert, butter, filtfilt
+from numpy.typing import NDArray
+from typing import Any
+
+def compute_plv(stream_paths: list[str], stream_configs: list[dict[str, Any]], output_name: str) -> str:
+    """
+    Compute PLV between arbitrary number of streams.
     
-    try:
-        args = sys.argv
-        if len(args) < 2:
-            usage()
+    Args:
+        stream_paths: List of paths to epoched stream files
+        stream_configs: List of dicts with 'type', 'channels'/'column', 'freq_band', 'sfreq' for each stream
+                       type: 'continuous' (EEG, EDA) or 'event' (HRV R-peaks)
+        output_name: Base name for output files
+    """
+    print(f"[PLV] Loading {len(stream_paths)} streams")
+    for i, (path, cfg) in enumerate(zip(stream_paths, stream_configs)):
+        print(f"[PLV]   Stream {i+1}: {os.path.basename(path)} ({cfg['type']})")
+    
+    # Load all streams
+    streams = [pl.read_parquet(path) for path in stream_paths]
+    
+    workspace = os.getcwd()
+    out_folder = os.path.join(workspace, f"{output_name}_plv")
+    os.makedirs(out_folder, exist_ok=True)
+    
+    conditions = sorted(streams[0]['condition'].unique().to_list())
+    print(f"[PLV] Processing {len(conditions)} conditions: {conditions}")
+    
+    # Prepare filters for continuous streams
+    filters = []
+    for cfg in stream_configs:
+        if cfg['type'] == 'continuous':
+            butter_result = butter(4, cfg['freq_band'], btype='band', fs=cfg['sfreq'])
+            b: NDArray[np.float64] = butter_result[0]  # type: ignore[assignment]
+            a: NDArray[np.float64] = butter_result[1]  # type: ignore[assignment]
+            filters.append((b, a))
         else:
-            input_parquet = args[1]
-            run(input_parquet)
-    except Exception as e:
-        print(f"[PLV] PLV analysis errored for input: {sys.argv[1] if len(sys.argv) > 1 else 'unknown'}. Error: {e}")
+            filters.append(None)
+    
+    # Process each condition
+    for idx, cond in enumerate(conditions):
+        cond_data = [df.filter(pl.col('condition') == cond) for df in streams]
+        epoch_ids = sorted(cond_data[0]['epoch_id'].unique().to_list())
+        
+        # Determine output labels (channels or stream pairs)
+        continuous_streams = [(i, cfg) for i, cfg in enumerate(stream_configs) if cfg['type'] == 'continuous']
+        event_streams = [(i, cfg) for i, cfg in enumerate(stream_configs) if cfg['type'] == 'event']
+        
+        # Build all pairwise PLVs between streams
+        plv_results = []
+        
+        # Continuous vs Event (e.g., EEG-HRV, EDA-HRV)
+        if len(continuous_streams) > 0 and len(event_streams) > 0:
+            for cont_idx, cont_cfg in continuous_streams:
+                for ch in cont_cfg['channels']:
+                    ch_plvs = []
+                    
+                    for eid in epoch_ids:
+                        # Get continuous signal phase
+                        signal: NDArray[np.float64] = cond_data[cont_idx].filter(pl.col('epoch_id') == eid)[ch].to_numpy()
+                        b, a = filters[cont_idx]
+                        filtered: NDArray[np.float64] = filtfilt(b, a, signal)  # type: ignore[assignment]
+                        analytic: NDArray[np.complex128] = hilbert(filtered)  # type: ignore[assignment]
+                        cont_phase: NDArray[np.floating[Any]] = np.angle(analytic)
+                        
+                        # Get event phase for each event stream
+                        for evt_idx, evt_cfg in event_streams:
+                            event_epoch = cond_data[evt_idx].filter(pl.col('epoch_id') == eid)
+                            event_times: NDArray[np.float64] = event_epoch[evt_cfg['column']].to_numpy()
+                            
+                            # Build event phase signal
+                            time_axis: NDArray[np.float64] = cond_data[cont_idx].filter(pl.col('epoch_id') == eid)['time'].to_numpy()
+                            evt_phase: NDArray[np.float64] = np.zeros_like(time_axis)
+                            
+                            for i, t in enumerate(time_axis):
+                                n_events: int = int(np.sum(event_times <= t))
+                                if n_events > 0 and n_events < len(event_times):
+                                    prev: np.float64 = event_times[n_events-1]
+                                    nxt: np.float64 = event_times[n_events]
+                                    frac: np.float64 = (t - prev) / (nxt - prev)
+                                    evt_phase[i] = 2 * np.pi * (n_events + frac)
+                            
+                            # Calculate PLV
+                            phase_diff: NDArray[np.floating[Any]] = cont_phase - evt_phase
+                            plv: float = float(np.abs(np.mean(np.exp(1j * phase_diff))))
+                            ch_plvs.append(plv)
+                    
+                    if ch_plvs:
+                        label = f"{ch}-{os.path.splitext(os.path.basename(stream_paths[event_streams[0][0]]))[0]}"
+                        plv_results.append({
+                            'pair': label,
+                            'plv_mean': float(np.mean(ch_plvs)),
+                            'plv_sem': float(np.std(ch_plvs, ddof=1) / np.sqrt(len(ch_plvs)))
+                        })
+        
+        # Continuous vs Continuous (e.g., EEG-EDA)
+        if len(continuous_streams) >= 2:
+            for i, (idx1, cfg1) in enumerate(continuous_streams[:-1]):
+                for idx2, cfg2 in continuous_streams[i+1:]:
+                    for ch1 in cfg1['channels']:
+                        for ch2 in cfg2['channels']:
+                            pair_plvs = []
+                            
+                            for eid in epoch_ids:
+                                # Signal 1
+                                sig1: NDArray[np.float64] = cond_data[idx1].filter(pl.col('epoch_id') == eid)[ch1].to_numpy()
+                                b1, a1 = filters[idx1]
+                                filt1: NDArray[np.float64] = filtfilt(b1, a1, sig1)  # type: ignore[assignment]
+                                anal1: NDArray[np.complex128] = hilbert(filt1)  # type: ignore[assignment]
+                                phase1: NDArray[np.floating[Any]] = np.angle(anal1)
+                                
+                                # Signal 2
+                                sig2: NDArray[np.float64] = cond_data[idx2].filter(pl.col('epoch_id') == eid)[ch2].to_numpy()
+                                b2, a2 = filters[idx2]
+                                filt2: NDArray[np.float64] = filtfilt(b2, a2, sig2)  # type: ignore[assignment]
+                                anal2: NDArray[np.complex128] = hilbert(filt2)  # type: ignore[assignment]
+                                phase2: NDArray[np.floating[Any]] = np.angle(anal2)
+                                
+                                # Interpolate if different lengths due to different sampling rates
+                                if len(phase1) != len(phase2):
+                                    from scipy.interpolate import interp1d
+                                    if len(phase2) < len(phase1):
+                                        x_old = np.linspace(0, 1, len(phase2))
+                                        x_new = np.linspace(0, 1, len(phase1))
+                                        phase2 = interp1d(x_old, phase2, kind='linear')(x_new)
+                                    else:
+                                        x_old = np.linspace(0, 1, len(phase1))
+                                        x_new = np.linspace(0, 1, len(phase2))
+                                        phase1 = interp1d(x_old, phase1, kind='linear')(x_new)
+                                
+                                # PLV
+                                pdiff: NDArray[np.floating[Any]] = phase1 - phase2
+                                plv_val: float = float(np.abs(np.mean(np.exp(1j * pdiff))))
+                                pair_plvs.append(plv_val)
+                            
+                            if pair_plvs:
+                                plv_results.append({
+                                    'pair': f"{ch1}-{ch2}",
+                                    'plv_mean': float(np.mean(pair_plvs)),
+                                    'plv_sem': float(np.std(pair_plvs, ddof=1) / np.sqrt(len(pair_plvs)))
+                                })
+        
+        # Output
+        if plv_results:
+            result_df = pl.DataFrame(plv_results)
+            output = pl.DataFrame({
+                'condition': [cond],
+                'x_data': [result_df['pair'].to_list()],
+                'y_data': [result_df['plv_mean'].to_list()],
+                'y_var': [result_df['plv_sem'].to_list()],
+                'plot_type': ['bar'],
+                'x_label': ['Stream Pair'],
+                'y_label': ['Phase-Locking Value (PLV)']
+            })
+            
+            out_file = os.path.join(out_folder, f"{output_name}_plv{idx+1}.parquet")
+            output.write_parquet(out_file)
+            print(f"[PLV]   {cond}: {os.path.basename(out_file)} ({len(plv_results)} pairs)")
+    
+    # Signal file
+    signal_path = os.path.join(workspace, f"{output_name}_plv.parquet")
+    pl.DataFrame({
+        'signal': [1], 
+        'source': [','.join([os.path.basename(p) for p in stream_paths])], 
+        'conditions': [len(conditions)]
+    }).write_parquet(signal_path)
+    
+    print(f"[PLV] Finished. Signal: {os.path.basename(signal_path)}")
+    return signal_path
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print('[PLV] Usage: python plv_analyzer.py <config_dict>')
+        print('[PLV] Example: python plv_analyzer.py "{"streams": ["eeg.parquet", "hrv.parquet"], "configs": [{"type": "continuous", "channels": ["F3", "Fz"], "freq_band": [8, 13], "sfreq": 1000}, {"type": "event", "column": "time"}], "output_name": "EV_002_plv"}"')
         sys.exit(1)
+    
+    # Parse config
+    config = ast.literal_eval(sys.argv[1])
+    compute_plv(config['streams'], config['configs'], config['output_name'])

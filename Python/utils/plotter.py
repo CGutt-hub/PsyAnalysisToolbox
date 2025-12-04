@@ -3,6 +3,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 sanitize = lambda v: re.sub(r"[^A-Za-z0-9._-]", "_", str(v))
 to_lst = lambda x: x.to_list() if isinstance(x, pl.Series) else (x if isinstance(x, list) else [])
+truncate = lambda s, max_len=40: (s if len(s) <= max_len else s[:max_len-3] + '...') if isinstance(s, str) else s
 attach = lambda t, o, i: ((lambda r, w: ([w.add_page(p) for p in r.pages], w.add_metadata({"/Producer": "EmotiView", "/Conformance": "/PDF/A-1b"}), w.add_attachment(os.path.basename(i), open(i, 'rb').read()), (lambda f: (w.write(f), f.close()))(open(o, 'wb')), os.remove(t), o))(__import__('pypdf').PdfReader(t), __import__('pypdf').PdfWriter()) if __import__('importlib').util.find_spec('pypdf') else (shutil.move(t, o), o)[-1])
 
 def plot(df, pdf_path):
@@ -17,8 +18,8 @@ def plot(df, pdf_path):
     
     print(f"[PLOT] Plot type: {plot_type}, Concatenated: {is_concat}, Labels: {labels if labels else 'none'}")
     
-    # Grid layout for line_grid: separate subplot per condition
-    if plot_type == 'line_grid' and is_concat:
+    # Grid layout for line_grid or grid: separate subplot per condition
+    if (plot_type == 'line_grid' or plot_type == 'grid') and is_concat:
         n_plots = len(x_data)
         n_cols = min(3, n_plots)
         n_rows = (n_plots + n_cols - 1) // n_cols
@@ -29,19 +30,27 @@ def plot(df, pdf_path):
         for i, (xd, yd, yv) in enumerate(zip(x_data, y_data, y_var if y_var else [None]*len(x_data))):
             ax = axes[i]
             xd_list, yd_list = to_lst(xd), to_lst(yd)
-            ax.plot(xd_list, yd_list, linewidth=2.5, alpha=0.85, color='dimgray')
             
-            # Add shaded error region if variance provided
-            if yv is not None:
-                yv_list = to_lst(yv)
-                import numpy as np
-                # Filter out None values
-                if yv_list and all(v is not None for v in yv_list):
-                    ax.fill_between(xd_list, [y - e for y, e in zip(yd_list, yv_list)], 
-                                   [y + e for y, e in zip(yd_list, yv_list)], alpha=0.3, color='dimgray')
+            # For 'grid' type (bar plots), create bar chart
+            if plot_type == 'grid':
+                ax.bar(range(len(yd_list)), yd_list, yerr=to_lst(yv) if yv else None, color='dimgray', alpha=0.85, capsize=4, error_kw={'linewidth': 1.5})
+                ax.set_xticks(range(len(xd_list)))
+                ax.set_xticklabels([truncate(x) for x in xd_list], rotation=45, ha='right', fontsize=9)
+            else:
+                # For 'line_grid' type, create line plot
+                ax.plot(xd_list, yd_list, linewidth=2.5, alpha=0.85, color='dimgray')
+                
+                # Add shaded error region if variance provided
+                if yv is not None:
+                    yv_list = to_lst(yv)
+                    import numpy as np
+                    # Filter out None values
+                    if yv_list and all(v is not None for v in yv_list):
+                        ax.fill_between(xd_list, [y - e for y, e in zip(yd_list, yv_list)], 
+                                       [y + e for y, e in zip(yd_list, yv_list)], alpha=0.3, color='dimgray')
             
             ax.set_title(lbl(i), fontsize=14, fontweight='bold')
-            ax.set_xlabel(row.get('x_label', ''), fontsize=12)
+            ax.set_xlabel(row.get('x_label', '') if plot_type == 'line_grid' else row.get('x_axis', ''), fontsize=12)
             ax.set_ylabel(row.get('y_label', ''), fontsize=12)
             ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.8)
             [ax.spines[s].set_visible(False) for s in ['top', 'right']]
@@ -61,7 +70,7 @@ def plot(df, pdf_path):
          (lambda n_cond, cats, w: ([ax.bar([i + (j - len(cats)/2 + 0.5) * w for i in range(n_cond)], [to_lst(y_data[i])[j] for i in range(n_cond)], width=w, label=cats[j], yerr=[to_lst(y_var[i])[j] if i < len(y_var) and j < len(to_lst(y_var[i])) else 0 for i in range(n_cond)] if y_var else None, color=colors[j % len(colors)], alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}) for j in range(len(cats))], ax.set_xticks(range(n_cond)), ax.set_xticklabels(labels, fontsize=11), ax.legend(loc='upper right', fontsize=10, framealpha=0.95, edgecolor='gray')))(len(labels), to_lst(x_data[0]), 0.75 / len(to_lst(x_data[0])) if len(to_lst(x_data[0])) > 0 else 0.75) if plot_type == 'bar' else None) if is_concat else (
          ax.plot(x_data, y_data, linewidth=2.5, alpha=0.85, color='dimgray') if plot_type == 'line' else
          ax.scatter(x_data, y_data, s=50, alpha=0.7, color='dimgray') if plot_type == 'scatter' else
-         (ax.bar(range(len(y_data)), y_data, yerr=y_var if y_var else None, color='dimgray', alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}), ax.set_xticks(range(len(x_data))), ax.set_xticklabels(x_data, rotation=45, ha='right', fontsize=10)))
+         (ax.bar(range(len(y_data)), y_data, yerr=y_var if y_var else None, color='dimgray', alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}), ax.set_xticks(range(len(x_data))), ax.set_xticklabels([truncate(x) for x in x_data], rotation=45, ha='right', fontsize=10)))
         
         ax.set_xlabel(row.get('x_axis') or row.get('x_label', ''), fontsize=13, fontweight='medium')
         ax.set_ylabel(row.get('y_axis') or row.get('y_label', ''), fontsize=13, fontweight='medium')
