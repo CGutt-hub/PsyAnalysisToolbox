@@ -49,11 +49,24 @@ def write_outputs(df, selectors, base, out_folder):
         if 'time' in df.columns:
             out_df = df.select(['time'] + sel_cols)
         else:
-            # should not happen because we validate earlier, but keep safe
             out_df = df.select(sel_cols)
-        out_path = os.path.join(out_folder, f"{base}_extr{idx+1}.parquet")
-        out_df.write_parquet(out_path)
-        print(f"[PROC] Wrote {os.path.basename(out_path)} columns={out_df.columns}")
+        parquet_path = os.path.join(out_folder, f"{base}_extr{idx+1}.parquet")
+        out_df.write_parquet(parquet_path)
+        print(f"[PROC] Wrote {os.path.basename(parquet_path)} columns={out_df.columns}")
+        # Save as .fif using MNE RawArray if possible
+        try:
+            import mne, numpy as np
+            ch_names = [c for c in out_df.columns if c != 'time']
+            data = out_df.select(ch_names).to_numpy().T
+            times = out_df['time'].to_numpy() if 'time' in out_df.columns else None
+            sfreq = 1.0 / np.median(np.diff(times)) if times is not None and len(times) > 1 else 1.0
+            info = mne.create_info(ch_names, sfreq, ch_types='misc')
+            raw = mne.io.RawArray(data, info, verbose=False)
+            fif_path = os.path.join(out_folder, f"{base}_extr{idx+1}.fif")
+            raw.save(fif_path, overwrite=True, verbose=False)
+            print(f"[PROC] Wrote {os.path.basename(fif_path)} columns={out_df.columns}")
+        except Exception as e:
+            print(f"[PROC] Could not write .fif for {os.path.basename(parquet_path)}: {e}")
         writes += 1
     if unresolved:
         avail = ','.join(dcols)

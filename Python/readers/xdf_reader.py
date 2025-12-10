@@ -62,23 +62,21 @@ def read_xdf(ip):
     
     for i, s in enumerate(streams):
         stream_type = get_stream_type(s)
-        
-        # Save as MNE .fif for EEG/NIRS streams, otherwise parquet
-        if stream_type in ['EEG', 'NIRS', 'fNIRS']:
-            out_path = os.path.join(out_folder, f"{base}_xdf{i+1}.fif")
-            success = save_as_mne(s, out_path, stream_type)
-            if success:
-                ch_names = get_ch_names(s)
-                n_samples = len(s.get('time_stamps', []))
-                n_channels = len(ch_names) if ch_names else 0
-                print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): {n_samples} samples, {n_channels} channels -> .fif")
-            else:
-                print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): Empty, skipped")
+        fif_path = os.path.join(out_folder, f"{base}_xdf{i+1}.fif")
+        parquet_path = os.path.join(out_folder, f"{base}_xdf{i+1}.parquet")
+        # Save as MNE .fif (always attempt)
+        success = save_as_mne(s, fif_path, stream_type)
+        if success:
+            ch_names = get_ch_names(s)
+            n_samples = len(s.get('time_stamps', []))
+            n_channels = len(ch_names) if ch_names else 0
+            print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): {n_samples} samples, {n_channels} channels -> .fif")
         else:
-            df = make_df(s)
-            out_path = os.path.join(out_folder, f"{base}_xdf{i+1}.parquet")
-            df.write_parquet(out_path)
-            print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): {df.shape} -> .parquet")
+            print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): Empty or not suitable for .fif, skipped .fif")
+        # Save as parquet (always attempt)
+        df = make_df(s)
+        df.write_parquet(parquet_path)
+        print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): {df.shape} -> .parquet")
     
     signal_path = os.path.join(workspace_root, f"{base}_xdf.parquet")
     pl.DataFrame({'signal': [1], 'source': [os.path.basename(ip)], 'streams': [len(streams)]}).write_parquet(signal_path)
