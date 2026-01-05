@@ -64,7 +64,7 @@ def compute_psd(ip: str, bands: dict, channels: list | None = None) -> str:
             os.path.join(out_folder, f"{base}_psd{idx+1}_plot.parquet"))
         print(f"[PSD]   {cond}: {base}_psd{idx+1}.parquet (raw + plot)")
     
-    pl.DataFrame({'signal': [1], 'source': [os.path.basename(ip)], 'conditions': [len(conds)]}).write_parquet(
+    pl.DataFrame({'signal': [1], 'source': [os.path.basename(ip)], 'conditions': [len(conds)], 'folder_path': [os.path.abspath(out_folder)]}).write_parquet(
         os.path.join(workspace, f"{base}_psd.parquet"))
     
     print(f"[PSD] Finished. Signal: {base}_psd.parquet")

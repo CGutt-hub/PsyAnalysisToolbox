@@ -77,7 +77,8 @@ def analyze_hrv(ip: str) -> str:
     pl.DataFrame({
         'signal': [1],
         'source': [os.path.basename(ip)],
-        'conditions': [len(conditions)]
+        'conditions': [len(conditions)],
+        'folder_path': [os.path.abspath(out_folder)]
     }).write_parquet(signal_path)
     
     print(f"[ANALYZE] HRV analysis finished. Signal: {signal_path}")

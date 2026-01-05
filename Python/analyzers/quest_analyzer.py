@@ -96,8 +96,10 @@ def analyze(ip, param_str, out_prefix):
         
         # Write signalling file in workspace root
         signal_path = os.path.join(os.getcwd(), f"{folder_name}.parquet")
-        pl.DataFrame([{'signal': 1, 'source': os.path.basename(ip), 'conditions': condition_count}]).write_parquet(signal_path)
+        pl.DataFrame([{'signal': 1, 'source': os.path.basename(ip), 'conditions': condition_count, 'folder_path': os.path.abspath(folder_path)}]).write_parquet(signal_path)
         print(f"[ANALYZER] Signal file: {signal_path} | {condition_count} conditions")
+        print(signal_path)
+        return signal_path
     else:
         # No condition patterns - search for x-axis entries and get sibling data values
         print(f"[ANALYZER] No condition patterns - searching for x-axis entries as siblings")
@@ -173,5 +175,7 @@ def analyze(ip, param_str, out_prefix):
         out_path = os.path.join(os.getcwd(), f"{base}_{out_prefix}.parquet")
         pl.DataFrame([out]).write_parquet(out_path)
         print(f"[ANALYZER] Output: {out_path} | {sum(counts)} values, {len(x_data)} categories")
+        print(out_path)
+        return out_path
 
 if __name__ == '__main__': (lambda a: analyze(a[1], a[2], a[3]) if len(a) >= 4 else (print("Usage: python quest_analyzer.py <input_parquet> <cherry_pick_param> <output_prefix>"), sys.exit(1)))(sys.argv)

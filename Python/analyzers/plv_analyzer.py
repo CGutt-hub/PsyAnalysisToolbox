@@ -163,7 +163,8 @@ def compute_plv(stream_paths: list[str], stream_configs: list[dict[str, Any]], o
     pl.DataFrame({
         'signal': [1], 
         'source': [','.join([os.path.basename(p) for p in stream_paths])], 
-        'conditions': [len(conditions)]
+        'conditions': [len(conditions)],
+        'folder_path': [os.path.abspath(out_folder)]
     }).write_parquet(signal_path)
     
     print(f"[PLV] Finished. Signal: {os.path.basename(signal_path)}")

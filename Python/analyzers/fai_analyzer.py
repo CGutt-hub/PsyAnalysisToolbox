@@ -59,7 +59,7 @@ def compute_fai(ip: str, band: str, pairs: list) -> str:
             os.path.join(out_folder, f"{base}_fai{idx+1}.parquet"))
         print(f"[FAI]   {cond}: {base}_fai{idx+1}.parquet ({len(fai_vals)} pairs)")
     
-    pl.DataFrame({'signal': [1], 'source': [os.path.basename(folder)], 'conditions': [len(conds)]}).write_parquet(
+    pl.DataFrame({'signal': [1], 'source': [os.path.basename(folder)], 'conditions': [len(conds)], 'folder_path': [os.path.abspath(out_folder)]}).write_parquet(
         os.path.join(workspace, f"{base}_fai.parquet"))
     
     print(f"[FAI] Finished. Signal: {base}_fai.parquet")

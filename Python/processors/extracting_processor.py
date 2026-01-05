@@ -1,121 +1,15 @@
-import polars as pl, sys, os
+import polars as pl, sys, os, mne, numpy as np, warnings
+warnings.filterwarnings('ignore', message='.*does not conform to MNE naming conventions.*')
 
-# usage lambda
-usage = lambda: (print('[PROC] Usage: python extracting_processor.py <input_parquet> <selector1> [selector2 ...]') or sys.exit(1))
+resolve = lambda s, dc: [] if not s or s == '' else (lambda p: dc[int(p[0].strip() or 0) - 1 if p[0].strip() else 0 : (int(p[1].strip()) if p[1].strip() else len(dc))] if len(p) > 1 else dc[int(p[0].strip() or 0) - 1 if p[0].strip() else 0:])(s.split(':')) if ':' in s else [dc[int(s) - 1]] if s.lstrip('-').isdigit() and 1 <= int(s) <= len(dc) else [dc[len(dc) + int(s)]] if s.lstrip('-').isdigit() and int(s) < 0 and abs(int(s)) <= len(dc) else [c for c in dc if c.lower() == s.lower()] or [c for c in dc if s.lower() in c.lower()] or [c for c in dc if c.lower().startswith(s.lower())] or []
 
-get_output_filename = lambda base: f"{base}_extr.parquet"
+def load_input(ip: str) -> pl.DataFrame:
+    if ip.endswith('.parquet'):
+        return pl.read_parquet(ip)
+    raw = mne.io.read_raw_fif(ip, preload=True, verbose=False)
+    data = np.array(raw.get_data(), dtype=np.float64)
+    return pl.DataFrame({'time': raw.times, **{ch: data[i] for i, ch in enumerate(raw.ch_names)}})
 
+run = lambda ip, sels: (lambda df, b, wr, of: (os.makedirs(of, exist_ok=True), [((lambda od, pp, fp, chs, t, sf: (od.write_parquet(pp), print(f"[PROC] {os.path.basename(pp)} cols={od.columns}"), mne.io.RawArray(np.array([[0.0]]), mne.create_info(['empty'], 1.0, ch_types='misc'), verbose=False).save(fp, overwrite=True, verbose=False) if not chs else mne.io.RawArray(od.select(chs).to_numpy().T, mne.create_info(chs, sf, ch_types='misc'), verbose=False).save(fp, overwrite=True, verbose=False), print(f"[PROC] {os.path.basename(fp)}"))[-1])(df.select(['time'] + sc) if 'time' in df.columns else df.select(sc), os.path.join(of, f"{b}_extr{i+1}.parquet"), os.path.join(of, f"{b}_extr{i+1}.fif"), [c for c in (df.select(['time'] + sc) if 'time' in df.columns else df.select(sc)).columns if c != 'time'], (df.select(['time'] + sc) if 'time' in df.columns else df.select(sc))['time'].to_numpy() if 'time' in df.columns else None, 1.0 / np.median(np.diff((df.select(['time'] + sc) if 'time' in df.columns else df.select(sc))['time'].to_numpy())) if 'time' in df.columns and len((df.select(['time'] + sc) if 'time' in df.columns else df.select(sc))['time']) > 1 else 1.0)) for i, s in enumerate(sels) for sc in [resolve(s, df.columns[1:] if df.columns and df.columns[0].lower() == 'time' else df.columns)] if sc], pl.DataFrame({'signal': [1], 'source': [os.path.basename(ip)], 'streams': [len(sels)], 'folder_path': [os.path.abspath(of)]}).write_parquet(os.path.join(wr, f"{b}_extr.parquet")), print(f"[PROC] Extraction finished: {b}_extr.parquet"))[-1])(load_input(ip), os.path.splitext(os.path.basename(ip))[0], os.getcwd(), os.path.join(os.getcwd(), f"{os.path.splitext(os.path.basename(ip))[0]}_extr"))
 
-
-# Use lambdas for concise logic, named functions for multi-step logic
-def resolver(s, dcols):
-    # Allow both numeric and name-based selectors
-    if s is None or s == '':
-        return []
-    s = s.strip()
-    # range
-    if ':' in s:
-        parts = s.split(':')
-        start = 0 if parts[0].strip() == '' else (int(parts[0].strip()) - 1 if not parts[0].strip().startswith('-') else len(dcols) + int(parts[0].strip()))
-        end = len(dcols) - 1 if (len(parts) <= 1 or parts[1].strip() == '') else (int(parts[1].strip()) - 1 if not parts[1].strip().startswith('-') else len(dcols) + int(parts[1].strip()))
-        return dcols[start:end+1] if start <= end else []
-    if s.lstrip('-').isdigit():
-        idx = int(s)
-        if 1 <= idx <= len(dcols):
-            return [dcols[idx - 1]]
-        if idx < 0 and abs(idx) <= len(dcols):
-            return [dcols[len(dcols) + idx]]
-        return []
-    name = s.lower()
-    return ([c for c in dcols if c.lower() == name] or
-            [c for c in dcols if name in c.lower()] or
-            [c for c in dcols if c.lower().startswith(name)] or [])
-
-def write_outputs(df, selectors, base, out_folder):
-    os.makedirs(out_folder, exist_ok=True)
-    # determine data columns (exclude time if present at first position)
-    dcols = (df.columns[1:] if df.columns and df.columns[0].lower() == 'time' else df.columns)
-    writes = 0
-    unresolved = []
-    for idx, sel in enumerate(selectors):
-        try:
-            sel_cols = resolver(sel, dcols)
-        except ValueError as e:
-            raise
-        if not sel_cols:
-            unresolved.append((idx + 1, sel))
-            continue
-        # always include time column if present
-        if 'time' in df.columns:
-            out_df = df.select(['time'] + sel_cols)
-        else:
-            out_df = df.select(sel_cols)
-        parquet_path = os.path.join(out_folder, f"{base}_extr{idx+1}.parquet")
-        out_df.write_parquet(parquet_path)
-        print(f"[PROC] Wrote {os.path.basename(parquet_path)} columns={out_df.columns}")
-        # Save as .fif using MNE RawArray if possible
-        try:
-            import mne, numpy as np
-            ch_names = [c for c in out_df.columns if c != 'time']
-            data = out_df.select(ch_names).to_numpy().T
-            times = out_df['time'].to_numpy() if 'time' in out_df.columns else None
-            sfreq = 1.0 / np.median(np.diff(times)) if times is not None and len(times) > 1 else 1.0
-            info = mne.create_info(ch_names, sfreq, ch_types='misc')
-            raw = mne.io.RawArray(data, info, verbose=False)
-            fif_path = os.path.join(out_folder, f"{base}_extr{idx+1}.fif")
-            raw.save(fif_path, overwrite=True, verbose=False)
-            print(f"[PROC] Wrote {os.path.basename(fif_path)} columns={out_df.columns}")
-        except Exception as e:
-            print(f"[PROC] Could not write .fif for {os.path.basename(parquet_path)}: {e}")
-        writes += 1
-    if unresolved:
-        avail = ','.join(dcols)
-        msg = f"Selectors that resolved to no columns: {unresolved}. Available columns (excluding time): {avail}"
-        raise ValueError(msg)
-    return writes
-
-write_signal = lambda input_parquet, base, out_folder, writes_count: (
-    pl.DataFrame({'signal':[1], 'source':[os.path.basename(input_parquet)], 'streams':[writes_count]})
-        .write_parquet(os.path.join(out_folder, get_output_filename(base))) or
-    print(f"[PROC] Extraction finished. Wrote signal {os.path.join(out_folder, get_output_filename(base))} with {writes_count} streams")
-)
-
-def run(input_parquet, selectors):
-    print(f"[PROC] Extracting started for: {input_parquet} selectors={selectors}")
-    df = pl.read_parquet(input_parquet)
-    # require a time column in per-stream files
-    if 'time' not in [c.lower() for c in df.columns]:
-        base = os.path.splitext(os.path.basename(input_parquet))[0]
-        raise ValueError(f"Input file '{input_parquet}' does not contain a 'time' column and looks like a signalling/metadata file.\nUse the per-stream parquet located in the '{base}_xdf' folder (e.g. '{base}_xdf/{base}_xdf4.parquet').")
-    base = os.path.splitext(os.path.basename(input_parquet))[0]
-    # Always create the extr folder in the workspace root (cwd)
-    workspace_root = os.getcwd()
-    out_folder = os.path.join(workspace_root, f"{base}_extr")
-    writes_count = write_outputs(df, selectors, base, out_folder)
-    # Write the extr signalling file directly in the workspace root
-    write_signal(input_parquet, base, workspace_root, writes_count)
-
-if __name__ == '__main__':
-    # simple CLI: python extracting_processor.py <input_parquet> <selector1> [selector2 ...]
-    if len(sys.argv) < 3:
-        usage()
-    input_parquet = sys.argv[1]
-    selectors = sys.argv[2:]
-    try:
-        run(input_parquet, selectors)
-    except Exception as e:
-        print(f"[PROC][ERROR] {e}")
-        sys.exit(1)
-
-if __name__ == '__main__':
-    try:
-        args = sys.argv
-        if len(args) < 2:
-            usage()
-        else:
-            input_parquet = args[1]
-            selectors = args[2:] if len(args) > 2 else []
-            run(input_parquet, selectors)
-    except Exception as e:
-        print(f"[PROC] Error: {e}")
-        sys.exit(1)
+if __name__ == '__main__': (lambda a: run(a[1], a[2:]) if len(a) >= 3 else (print('[PROC] Usage: python extracting_processor.py <input.parquet> <selector1> [selector2 ...]'), sys.exit(1)))(sys.argv)

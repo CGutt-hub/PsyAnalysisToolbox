@@ -134,6 +134,7 @@ def run(inp, out_dir, pre):
     os.replace(sig + '.tmp', sig)
     print(f"[PLOT] Output PDF: {out_pdf}")
     print(f"[PLOT] Signal file: {sig}")
+    print(sig)
     return out_pdf
 
 if __name__ == '__main__': (lambda a: run(a[1], a[2], a[3] if len(a) > 3 else "plot") if len(a) >= 3 else (print("Usage: python plotter.py <input.parquet> <output_dir> [prefix]"), sys.exit(1)))(sys.argv)

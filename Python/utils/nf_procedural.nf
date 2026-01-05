@@ -1,82 +1,157 @@
-// Efficient participant discovery and output folder creation for any analysis pipeline
-process new_participant {
-    input:
-        val input_dir
-        val output_dir
-        val participant_pattern
-    output:
-        tuple val(participant_id), path(output_folder)
-    script:
-    """
-    for d in \$(ls -d ${input_dir}/${participant_pattern}); do
-        participant_id=\$(basename "\$d")
-        out_path=\"${output_dir}/\$participant_id\"
-        if [ ! -d \"\$out_path\" ] || [ \"\$(ls -A \"\$out_path\" 2>/dev/null | wc -l)\" -eq 0 ]; then
-            mkdir -p \"\$out_path\"
-            echo \"\$participant_id\" > participant_id.txt
-            echo \"\$out_path\" > output_folder.txt
-        fi
-    done
-    """
-    publishDir output_dir, mode: 'copy', pattern: '*.txt'
-}
 // Generic Nextflow procedural infrastructure for Python-based pipelines
 // Handles output directory creation, log management, and python_dispatcher process
-
-// Python dispatcher for all module calls
-process python_dispatcher {
-    debug params.debug_mode ?: false
-    errorStrategy 'finish'
-    input:
-        val python_exe
-        val script_name
-        val input_file
-        val script_args
-    output:
-        // Emit both .fif and .parquet files from any subfolder, for all output types
-        path "**/*.parquet", emit: 'parquet', optional: true
-        path "**/*.fif", emit: 'fif', optional: true
-    script:
-        """
-        ${python_exe} -u ${script_name} ${input_file} ${script_args}
-        """
+// Continuous workflow wrapper: discovers participants and creates output folders
+// Runs continuously, watching for new participants
+workflow workflow_wrapper {
+    take:
+        input_dir
+        output_dir
+        participant_pattern
+    
+    main:
+        // Convert glob pattern to regex
+        def regex_pattern = participant_pattern.replaceAll(/\*/, '.*').replaceAll(/\?/, '.')
+        def input_path = new File("${workflow.launchDir}/${input_dir}")
+        def output_path = new File("${workflow.launchDir}/${output_dir}")
+        
+        // Initial discovery of existing participants
+        def output_dirs = output_path.exists() ? output_path.list() as Set : [] as Set
+        def new_participants = input_path.list().findAll { it.matches(regex_pattern) }.findAll { !(it in output_dirs) }
+        
+        // Watch for new participant directories continuously
+        watched_participants = Channel
+            .watchPath("${workflow.launchDir}/${input_dir}/*", 'create,modify')
+            .map { path -> path.getName() }
+            .filter { it.matches(regex_pattern) }
+            .unique()
+        
+        // Combine initial discovery with watched directories
+        all_participants = Channel.fromList(new_participants).concat(watched_participants)
+            .filter { pid ->
+                def safe_id = pid.replaceAll('\r', '').trim().replaceAll('[^A-Za-z0-9._-]', '_')
+                def out_folder = new File("${workflow.launchDir}/${output_dir}/${safe_id}")
+                !out_folder.exists() // Only process if output folder doesn't exist yet
+            }
+        
+        // Create folders and emit tuple [participant_id, output_folder]
+        // This ensures they're always synchronized
+        participant_context = all_participants.map { pid ->
+            def safe_id = pid.replaceAll('\r', '').trim().replaceAll('[^A-Za-z0-9._-]', '_')
+            def folder_path = new File("${workflow.launchDir}/${output_dir}/${safe_id}")
+            folder_path.mkdirs()
+            def folder = "${output_dir}/${safe_id}"
+            [pid, folder] // Return tuple [participant_id, output_folder]
+        }
+    
+    emit:
+        participant_context  // Emits [participant_id, output_folder] tuples
 }
 
-// Per-participant log management
-process copy_participant_logs {
-    publishDir "${output_dir}/logs", mode: 'copy'
+// Process to finalize a participant after all processing completes
+// Consolidates logs and syncs to git - triggered automatically by dependency graph
+process finalize_participant {
+    maxForks 1  // Serialize git operations to avoid lock conflicts
+    
     input:
-    val participant_id
-    path output_dir
-    val trigger  // To ensure this runs after other processes
-    output:
-    path "*.{log,txt}"
+        val participant_id
+        val output_folder
+        val trigger  // Final output - ensures this runs after all processing
+    
     script:
     """
-    # Create participant-specific log summary
-    echo "Pipeline execution logs for participant: ${participant_id}" > ${participant_id}_pipeline.log
-    echo "Execution date: \$(date)" >> ${participant_id}_pipeline.log
-    echo "Participant ID: ${participant_id}" >> ${participant_id}_pipeline.log
-    echo "Input directory: ${params.input_dir}/${participant_id}" >> ${participant_id}_pipeline.log
-    echo "Output directory: ${output_dir}" >> ${participant_id}_pipeline.log
-    echo "Python executable: ${params.python_exe}" >> ${participant_id}_pipeline.log
-    echo "================================" >> ${participant_id}_pipeline.log
-    # Copy relevant Nextflow logs that mention this participant
-    if [ -f "${workflow.launchDir}/.nextflow.log" ]; then
-        echo "Nextflow execution logs:" >> ${participant_id}_pipeline.log
-        grep -i "${participant_id}" "${workflow.launchDir}/.nextflow.log" >> ${participant_id}_pipeline.log || echo "No participant-specific logs found in main log" >> ${participant_id}_pipeline.log
-    fi
-    # Copy work directory logs if available
-    if [ -d "${workflow.workDir}" ]; then
-        echo "Work directory logs:" >> ${participant_id}_pipeline.log
-        find ${workflow.workDir} -type f -name "*.log" -exec grep -l "${participant_id}" {} \\; | head -20 | while read logfile; do
-            echo "--- \$(basename \$logfile) ---" >> ${participant_id}_pipeline.log
-            tail -50 "\$logfile" >> ${participant_id}_pipeline.log
-            echo "" >> ${participant_id}_pipeline.log
-        done
-    fi
-    # Create a processing summary
-    echo "Processing completed for ${participant_id}" > ${participant_id}_summary.txt
-    echo "Check ${participant_id}_pipeline.log for detailed execution information" >> ${participant_id}_summary.txt
+    #!/bin/bash
+    set -e
+    
+    participant="${participant_id}"
+    output_dir="${workflow.launchDir}/${output_folder}"
+    log_file="\${output_dir}/module_logs.txt"
+    
+    echo "=== Finalizing ${participant_id} ==="
+    
+    # Find and consolidate logs
+    find "${workflow.workDir}" -type f -name ".command.log" -path "*\${participant}*" -print0 | 
+        sort -z | 
+        xargs -0 cat > "\${log_file}" 2>/dev/null || true
+    
+    echo "Logs consolidated: \${log_file}"
+    
+    # Git sync
+    cd "${workflow.launchDir}"
+    git add .
+    git commit -m "Update results for ${participant_id}: \$(date +%Y-%m-%d_%H-%M-%S)" || true
+    git push || true
+    
+    echo "Finalization complete for ${participant_id}"
     """
 }
+
+// Generic IOInterface: exe script input params
+// Language-agnostic CLI wrapper for any executable (Python, Java, Rust, etc.)
+process IOInterface {
+    input:
+        val env_exe             // Executable path (python, java, rust binary, etc.)
+        val script              // Script path relative to workflow.launchDir
+        path input              // Input file(s) - automatically staged by Nextflow
+        val params              // Additional arguments
+
+    output:
+        path "*.{fif,parquet}"
+
+    script:
+    // Shell-escape single quotes by replacing ' with '\''
+    def escapeArg = { arg -> arg.toString().replace("'", "'\\''") }
+    
+    // Format inputs: convert to quoted shell arguments
+    def inputArgs = input instanceof Collection 
+        ? input.collect { "'${escapeArg(it)}'" }.join(' ')
+        : "'${escapeArg(input)}'"
+    
+    // Format additional args: smart split that preserves bracketed/braced structures
+    def extraArgs = ""
+    if (params && params.toString().trim() != "") {
+        def paramStr = params.toString().trim()
+        
+        // Parse arguments respecting brackets and braces
+        def args = []
+        def currentArg = new StringBuilder()
+        def depth = 0
+        def inQuote = false
+        
+        for (int i = 0; i < paramStr.length(); i++) {
+            def c = paramStr.charAt(i)
+            
+            if (c == '"' as char || c == "'" as char) {
+                inQuote = !inQuote
+                currentArg.append(c)
+            } else if (!inQuote) {
+                if (c == '[' as char || c == '{' as char) {
+                    depth++
+                    currentArg.append(c)
+                } else if (c == ']' as char || c == '}' as char) {
+                    depth--
+                    currentArg.append(c)
+                } else if (c == ' ' as char && depth == 0) {
+                    if (currentArg.length() > 0) {
+                        args.add(currentArg.toString())
+                        currentArg = new StringBuilder()
+                    }
+                } else {
+                    currentArg.append(c)
+                }
+            } else {
+                currentArg.append(c)
+            }
+        }
+        
+        if (currentArg.length() > 0) {
+            args.add(currentArg.toString())
+        }
+        
+        extraArgs = args.collect { "'${escapeArg(it)}'" }.join(' ')
+    }
+    
+    """
+    ${env_exe} "${workflow.launchDir}/${script}" ${inputArgs} ${extraArgs}
+    """
+}
+

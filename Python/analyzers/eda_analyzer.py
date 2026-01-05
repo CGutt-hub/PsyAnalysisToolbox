@@ -61,7 +61,8 @@ def analyze_eda(ip: str) -> str:
     pl.DataFrame({
         'signal': [1],
         'source': [os.path.basename(ip)],
-        'conditions': [len(conditions)]
+        'conditions': [len(conditions)],
+        'folder_path': [os.path.abspath(out_folder)]
     }).write_parquet(signal_path)
     
     print(f"[ANALYZE] EDA analysis finished. Signal: {signal_path}")

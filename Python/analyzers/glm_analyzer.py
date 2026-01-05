@@ -3,57 +3,78 @@ import polars as pl, pandas as pd, mne, sys, ast, os
 from mne_nirs.statistics import run_glm
 if __name__ == "__main__":
     usage = lambda: print("Usage: python glm_analyzer.py <input_parquet> <sfreq> <ch_types_map> <contrasts_config>") or sys.exit(1)
-    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_glm.parquet"
-    run = lambda input_parquet, sfreq, ch_types_map, contrasts_config: (
-        print(f"[GLM] GLM analysis started for input: {input_parquet}"),
-        print(f"[GLM] Loading input epochs: {input_parquet}"),
-        (lambda df: (
-            print(f"[GLM] Loaded epochs DataFrame shape: {df.shape}"),
-            (lambda ch_names: (
-                print(f"[GLM] Channel names: {ch_names}"),
-                (lambda ch_types_list: (
-                    print(f"[GLM] Channel types: {ch_types_list}"),
-                    (lambda ch_types: (
-                        print(f"[GLM] Using channel type(s): {ch_types}"),
-                        (lambda raw: (
-                            print(f"[GLM] Created MNE RawArray for GLM."),
-                            (lambda glm_results: (
-                                print(f"[GLM] GLM results computed."),
-                                (lambda final_df: (
-                                    print(f"[GLM] Final GLM DataFrame shape: {final_df.shape}"),
-                                    # Add standardized plotting metadata
-                                    (pl.DataFrame(final_df if not final_df.empty else []).with_columns([
-                                        pl.lit("bar").alias("plot_type"),  # GLM contrast results -> bar chart
-                                        pl.lit("ordinal").alias("x_scale"),  # contrast names
-                                        pl.lit("nominal").alias("y_scale"),  # t-statistics or p-values
-                                        pl.col("contrast").alias("x_data") if "contrast" in pl.DataFrame(final_df).columns else pl.lit("contrast").alias("x_data"),
-                                        pl.lit(0.0).alias("y_data"),  # placeholder - actual GLM statistic
-                                        pl.lit("t-statistic").alias("y_label"),
-                                        pl.lit(1).alias("plot_weight")
-                                    ]) if not final_df.empty else pl.DataFrame([{
-                                        "plot_type": "bar", "x_scale": "ordinal", "y_scale": "nominal",
-                                        "x_data": "no_data", "y_data": 0.0, "y_label": "t-statistic", "plot_weight": 1
-                                    }])).write_parquet(get_output_filename(input_parquet)),
-                                    print(f"[GLM] GLM analysis finished for input: {input_parquet}")
-                                ))(
-                                    pd.concat([
-                                        df_.assign(contrast=name)
-                                        for name, weights in contrasts_config.items()
-                                        for df_ in [glm_results.compute_contrast(weights).to_dataframe()]
-                                        if not df_.empty
-                                    ], ignore_index=True) if contrasts_config else glm_results.results.to_dataframe()
-                                )
-                            ))(run_glm(raw, None))
-                        ))(mne.io.RawArray(
-                            df.pivot_table(index='channel', columns='time', values='value').reindex(ch_names).to_numpy(),
-                            mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types if isinstance(ch_types, str) else ch_types_list[0]),
-                            verbose=False
-                        ))
-                    ))(ch_types_list[0] if all(t == ch_types_list[0] for t in ch_types_list) else ch_types_list)
-                ))(list(ch_types_map.values()))
-            ))(sorted(set(df['channel'])))
-        ))(pl.read_parquet(input_parquet).to_pandas())
-    )
+    
+    def run(input_parquet, sfreq, ch_types_map, contrasts_config):
+        print(f"[GLM] GLM analysis started for input: {input_parquet}")
+        base = os.path.splitext(os.path.basename(input_parquet))[0]
+        workspace = os.getcwd()
+        out_folder = os.path.join(workspace, f"{base}_glm")
+        os.makedirs(out_folder, exist_ok=True)
+        
+        print(f"[GLM] Loading input epochs: {input_parquet}")
+        df = pl.read_parquet(input_parquet).to_pandas()
+        print(f"[GLM] Loaded epochs DataFrame shape: {df.shape}")
+        
+        ch_names = sorted(set(df['channel']))
+        ch_types_list = list(ch_types_map.values())
+        ch_types = ch_types_list[0] if all(t == ch_types_list[0] for t in ch_types_list) else ch_types_list
+        
+        print(f"[GLM] Channel names: {ch_names}")
+        print(f"[GLM] Using channel type(s): {ch_types}")
+        
+        raw = mne.io.RawArray(
+            df.pivot_table(index='channel', columns='time', values='value').reindex(ch_names).to_numpy(),
+            mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types if isinstance(ch_types, str) else ch_types_list[0]),
+            verbose=False
+        )
+        print(f"[GLM] Created MNE RawArray for GLM.")
+        
+        glm_results = run_glm(raw, None)
+        print(f"[GLM] GLM results computed.")
+        
+        if contrasts_config:
+            contrasts = list(contrasts_config.keys())
+            print(f"[GLM] Processing {len(contrasts)} contrasts: {contrasts}")
+            
+            for idx, (name, weights) in enumerate(contrasts_config.items()):
+                contrast_df = glm_results.compute_contrast(weights).to_dataframe()
+                if not contrast_df.empty:
+                    result = pl.DataFrame(contrast_df).with_columns([
+                        pl.lit("bar").alias("plot_type"),
+                        pl.lit("ordinal").alias("x_scale"),
+                        pl.lit("nominal").alias("y_scale"),
+                        pl.lit(name).alias("x_data"),
+                        pl.lit(0.0).alias("y_data"),
+                        pl.lit("t-statistic").alias("y_label"),
+                        pl.lit(1).alias("plot_weight")
+                    ])
+                    
+                    out_path = os.path.join(out_folder, f"{base}_glm{idx+1}.parquet")
+                    result.write_parquet(out_path)
+                    print(f"[GLM]   {name}: {os.path.basename(out_path)}")
+            
+            signal_path = os.path.join(workspace, f"{base}_glm.parquet")
+            pl.DataFrame({
+                'signal': [1],
+                'source': [os.path.basename(input_parquet)],
+                'conditions': [len(contrasts)],
+                'folder_path': [os.path.abspath(out_folder)]
+            }).write_parquet(signal_path)
+            print(f"[GLM] GLM analysis finished. Signal: {signal_path}")
+        else:
+            # No contrasts - single output
+            result_df = glm_results.results.to_dataframe()
+            out_path = os.path.join(out_folder, f"{base}_glm1.parquet")
+            pl.DataFrame(result_df if not result_df.empty else []).write_parquet(out_path)
+            
+            signal_path = os.path.join(workspace, f"{base}_glm.parquet")
+            pl.DataFrame({
+                'signal': [1],
+                'source': [os.path.basename(input_parquet)],
+                'conditions': [1],
+                'folder_path': [os.path.abspath(out_folder)]
+            }).write_parquet(signal_path)
+            print(f"[GLM] GLM analysis finished. Signal: {signal_path}")
     try:
         args = sys.argv
         if len(args) < 5:

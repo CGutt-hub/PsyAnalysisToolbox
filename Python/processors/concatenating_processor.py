@@ -1,4 +1,4 @@
-import polars as pl, sys
+import polars as pl, sys, os
 
 def concat_generic(files: list[str], conds: list[str]) -> pl.DataFrame:
     """
@@ -23,8 +23,15 @@ def concat_generic(files: list[str], conds: list[str]) -> pl.DataFrame:
     
     return pl.DataFrame([{**metadata_fields, **aggregated}])
 
-if __name__ == '__main__':
-    (lambda a: (lambda pairs: (
-        concat_generic([p.split(':')[1] for p in pairs], [p.split(':')[0] for p in pairs]).write_parquet(f"{a[1]}.parquet"),
-        print(f"[PROC] Output: {a[1]}.parquet")
-    ))([arg for arg in a[2:]]))(sys.argv)
+if __name__ == '__main__': (lambda a:
+    (lambda items, out_base: (
+        (lambda files, labels: (
+            (lambda out_path: (
+                concat_generic(files, labels).write_parquet(out_path),
+                print(f"[PROC] Concatenated {len(files)} files -> {out_path}"),
+                print(out_path)
+            ))(os.path.join(os.getcwd(), f"{out_base}.parquet"))
+        ))([p.split(':',1)[1] for p in items] if ':' in items[0] else items, 
+           [p.split(':',1)[0] for p in items] if ':' in items[0] else [f"cond{i+1}" for i in range(len(items))])
+    ))(a[1:-1], a[-1]) if len(a) >= 3 else (print(f"[PROC] Usage: python {a[0]} <path1> <path2> ... <out_basename> OR <label1:path1> <label2:path2> ... <out_basename>"), sys.exit(1))
+)(sys.argv)
