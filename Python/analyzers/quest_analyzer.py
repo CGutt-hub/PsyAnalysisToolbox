@@ -1,4 +1,4 @@
-import sys, ast, os, re, fnmatch, polars as pl, statistics
+import sys, ast, os, re, fnmatch, polars as pl, statistics, math
 
 parse_param = lambda s: s if not isinstance(s, str) else (lambda: ast.literal_eval(s) if not s.startswith('@') else ast.literal_eval(open(s[1:], 'r', encoding='utf-8').read()))() if s.startswith('@') or s.startswith('[') or s.startswith('{') else ast.literal_eval(re.sub(r"(?P<pre>(?:\A|\[|,)\s*)(?P<tok>[A-Za-z0-9_\-]+:\s*[^,\]\}]+)", lambda m: f"{m.group('pre')}'{m.group('tok')}'", s))
 parse_entry = lambda e: tuple(x.strip() for x in e.split(':', 1)) if ':' in e else (e, None)
@@ -77,14 +77,14 @@ def analyze(ip, param_str, out_prefix):
                 xv = str(xv_raw) if (xv_raw := get_prop(n, x_key)) is not None else None
                 if xv and xv not in x_ord: x_ord.append(xv)
                 if y_ticks is None and y_keys: y_ticks = list(dict.fromkeys([str(v) for k in (y_keys if isinstance(y_keys, (list, tuple)) else [y_keys]) if (v := get_prop(n, k)) is not None]))
-                if xv and (dv := get_prop(n, d_key)) is not None: conds.setdefault(xv, []).append(float(dv))
+                if xv and (dv := get_prop(n, d_key)) is not None: conds.setdefault(xv, []).append(float('nan') if dv == '' else float(dv))
             
             if not conds:
                 print(f"[ANALYZER]   WARNING: No data extracted for condition '{cond_name}'")
                 continue
             
             x_data, y_data, y_var, counts = [], [], [], []
-            for xl in x_ord: vals = conds.get(xl, []); x_data.append(xl); y_data.append(statistics.mean(vals) if vals else None); y_var.append(statistics.stdev(vals) if len(vals) > 1 else None); counts.append(len(vals))
+            for xl in x_ord: vals = conds.get(xl, []); valid_vals = [v for v in vals if not math.isnan(v)]; x_data.append(xl); y_data.append(statistics.mean(valid_vals) if valid_vals else None); y_var.append(statistics.stdev(valid_vals) if len(valid_vals) > 1 else None); counts.append(len(vals))
             if x_tick_labels and isinstance(x_tick_labels, dict):
                 x_data = [x_tick_labels.get(x, x) for x in x_data]
             
