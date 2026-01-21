@@ -30,6 +30,9 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
     meta_cols = ['time', 'sfreq', 'epoch_id', 'condition']
     ch_cols = [c for c in df.columns if c not in meta_cols]
     
+    print(f"[group] Available channels ({len(ch_cols)}): {ch_cols[:10]}..." if len(ch_cols) > 10 else f"[group] Available channels: {ch_cols}")
+    print(f"[group] Looking for ROIs: {list(groups.keys())}")
+    
     # Validate groups
     valid_groups = {}
     for name, members in groups.items():
