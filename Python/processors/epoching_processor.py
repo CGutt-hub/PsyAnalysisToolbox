@@ -4,28 +4,44 @@ from decimal import Decimal
 
 warnings.filterwarnings('ignore', message='.*does not conform to MNE naming conventions.*')
 
-def _epoch_mne(raw, events: Dict[str, List[Tuple[float, float]]], data_path: str, rec_start: float = 0.0) -> str:
+def _epoch_mne(raw, events: Dict[str, List[Tuple[float, float]]], data_path: str, rec_start: float = 0.0, event_sfreq: float = None) -> str:
     import mne
     
-    print(f"[PROC] MNE Raw: {len(raw.times)} samples, {len(raw.ch_names)} ch, {raw.info['sfreq']} Hz")
-    print(f"[PROC] Events: {sum(len(v) for v in events.values())} epochs")
+    print(f"[epoching] MNE Raw: {len(raw.times)} samples, {len(raw.ch_names)} ch, {raw.info['sfreq']} Hz")
+    print(f"[epoching] Events: {sum(len(v) for v in events.values())} epochs")
     
     # Detect event time format
     all_times = [t for pairs in events.values() for start, stop in pairs for t in (start, stop)]
     max_event, max_samples = max(all_times), len(raw.times)
-    rec_start_sample = int(rec_start * raw.info['sfreq'])
+    data_sfreq = raw.info['sfreq']
+    rec_duration = len(raw.times) / data_sfreq
     
     # Determine if events are absolute samples (need offset), relative samples, seconds, or milliseconds
-    if max_event > max_samples * 0.1:  # Sample range
+    # Key: if event_sfreq is provided and differs from data_sfreq, scale accordingly
+    if max_event > max_samples * 0.1:  # Sample range - events are in sample numbers
+        # Estimate event sampling rate from max values if not provided
+        if event_sfreq is None:
+            # Assume events match recording duration - derive implied sample rate
+            event_sfreq = max_event / rec_duration if rec_duration > 0 else data_sfreq
+        
         is_absolute = max_event > max_samples
-        convert = lambda t: int((t / raw.info['sfreq'] - rec_start) * raw.info['sfreq']) if is_absolute else int(t)
-        print(f"[PROC] Events: {'absolute' if is_absolute else 'relative'} samples (offset: {rec_start_sample if is_absolute else 0})")
+        # Convert from event sample space to data sample space via time
+        if abs(event_sfreq - data_sfreq) > 1.0:  # Different sample rates
+            # Event sample -> seconds -> data sample
+            convert = lambda t: int(((t / event_sfreq) - rec_start) * data_sfreq)
+            print(f"[epoching] Events: samples at {event_sfreq:.1f} Hz, converting to {data_sfreq:.1f} Hz")
+        elif is_absolute:
+            convert = lambda t: int((t / data_sfreq - rec_start) * data_sfreq)
+            print(f"[epoching] Events: absolute samples (offset: {int(rec_start * data_sfreq)})")
+        else:
+            convert = lambda t: int(t)
+            print(f"[epoching] Events: relative samples")
     elif max_event / raw.times[-1] > 10:  # Milliseconds
-        convert = lambda t: int(t * raw.info['sfreq'] / 1000.0)
-        print(f"[PROC] Events: milliseconds")
+        convert = lambda t: int(t * data_sfreq / 1000.0)
+        print(f"[epoching] Events: milliseconds")
     else:  # Seconds
-        convert = lambda t: int(t * raw.info['sfreq'])
-        print(f"[PROC] Events: seconds")
+        convert = lambda t: int(t * data_sfreq)
+        print(f"[epoching] Events: seconds")
     
     # Build MNE events array
     event_id, event_counter, event_list = {}, 1, []
@@ -38,10 +54,10 @@ def _epoch_mne(raw, events: Dict[str, List[Tuple[float, float]]], data_path: str
             if 0 <= sample < max_samples:
                 event_list.append([sample, 0, event_id[condition]])
             else:
-                print(f"[PROC] Warning: {condition} epoch at sample {sample} out of range")
+                print(f"[epoching] Warning: {condition} epoch at sample {sample} out of range")
     
     if not event_list:
-        print(f"[PROC] Error: No valid events")
+        print(f"[epoching] Error: No valid events")
         return ""
     
     mne_events = np.array(sorted(event_list, key=lambda x: x[0]), dtype=int)
@@ -50,13 +66,13 @@ def _epoch_mne(raw, events: Dict[str, List[Tuple[float, float]]], data_path: str
     first_start, first_stop = events[sorted(events.keys())[0]][0]
     tmax = (convert(first_stop) - convert(first_start)) / raw.info['sfreq']
     
-    print(f"[PROC] Epoching: 0-{tmax:.1f}s, {len(mne_events)} valid events")
+    print(f"[epoching] Epoching: 0-{tmax:.1f}s, {len(mne_events)} valid events")
     
     # Create and flatten epochs
     epochs_obj = mne.Epochs(raw, mne_events, event_id=event_id, tmin=0.0, tmax=tmax, 
                            baseline=None, preload=True, verbose=False)
     
-    print(f"[PROC] Created: {len(epochs_obj)} epochs")
+    print(f"[epoching] Created: {len(epochs_obj)} epochs")
     
     dfs = []
     for cond in sorted(event_id.keys()):
@@ -70,7 +86,7 @@ def _epoch_mne(raw, events: Dict[str, List[Tuple[float, float]]], data_path: str
     
     out = f"{os.path.splitext(os.path.basename(data_path))[0]}_epochs.parquet"
     (pl.concat(dfs) if dfs else pl.DataFrame()).write_parquet(out)
-    print(f"[PROC] Output: {out} ({len(pl.concat(dfs)) if dfs else 0} rows)")
+    print(f"[epoching] Output: {out} ({len(pl.concat(dfs)) if dfs else 0} rows)")
     return out
 
 def epoch_and_flatten(data_path: str, events_path: str, orig_path: str | None = None) -> str:
@@ -78,7 +94,7 @@ def epoch_and_flatten(data_path: str, events_path: str, orig_path: str | None = 
     
     if data_path.endswith('.fif'):
         import mne
-        print(f"[PROC] Loading: {data_path}")
+        print(f"[epoching] Loading: {data_path}")
         raw = mne.io.read_raw_fif(data_path, preload=True, verbose=False)
         
         # Get recording start time
@@ -93,7 +109,7 @@ def epoch_and_flatten(data_path: str, events_path: str, orig_path: str | None = 
                     break
         
         if rec_start > 0:
-            print(f"[PROC] Recording start: {rec_start:.1f}s")
+            print(f"[epoching] Recording start: {rec_start:.1f}s")
         return _epoch_mne(raw, events, data_path, rec_start)
     
     # Parquet data
@@ -101,8 +117,8 @@ def epoch_and_flatten(data_path: str, events_path: str, orig_path: str | None = 
     time_col = 'time' if 'time' in df.columns else df.columns[0]
     data_cols = [c for c in df.columns if c != time_col]
     
-    print(f"[PROC] Data: {len(df)} samples, {len(data_cols)} ch")
-    print(f"[PROC] Events: {sum(len(v) for v in events.values())} epochs")
+    print(f"[epoching] Data: {len(df)} samples, {len(data_cols)} ch")
+    print(f"[epoching] Events: {sum(len(v) for v in events.values())} epochs")
     
     # Unit normalization - cast to numeric types explicitly
     data_max_val = df[time_col].max()
@@ -117,7 +133,7 @@ def epoch_and_flatten(data_path: str, events_path: str, orig_path: str | None = 
     event_max = float(max(sp for eps in events.values() for _, sp in eps))
     scale_data, scale_event = (1.0, 1000.0) if data_max * 10 < event_max else (1000.0, 1.0) if event_max * 10 < data_max else (1.0, 1.0)
     
-    print(f"[PROC] Time ranges: data={data_max:.1f}, events={event_max:.1f}, scales: {scale_data}×{scale_event}")
+    print(f"[epoching] Time ranges: data={data_max:.1f}, events={event_max:.1f}, scales: {scale_data}×{scale_event}")
     
     dfs = [
         pl.DataFrame({
@@ -137,10 +153,10 @@ def epoch_and_flatten(data_path: str, events_path: str, orig_path: str | None = 
     
     out = f"{os.path.splitext(os.path.basename(data_path))[0]}_epochs.parquet"
     (pl.concat(dfs) if dfs else pl.DataFrame()).write_parquet(out)
-    print(f"[PROC] Output: {out} ({len(pl.concat(dfs)) if dfs else 0} rows)")
+    print(f"[epoching] Output: {out} ({len(pl.concat(dfs)) if dfs else 0} rows)")
     return out
 
 if __name__ == '__main__': (lambda a:
     epoch_and_flatten(a[1], a[2], a[3] if len(a) > 3 else None) if len(a) >= 3 else 
-    (print('[PROC] Usage: python epoching_processor.py <data> <events.parquet> [original.parquet]'), sys.exit(1))
+    (print('[epoching] Segment continuous data into epochs based on event times.\nUsage: epoching_processor.py <data.fif|parquet> <events.parquet> [original.parquet]'), sys.exit(1))
 )(sys.argv)

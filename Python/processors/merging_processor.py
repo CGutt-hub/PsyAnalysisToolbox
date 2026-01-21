@@ -1,32 +1,19 @@
 import polars as pl, sys, os, functools
-if __name__ == "__main__":
-    usage = lambda: print("[PROC] Usage: python merging_processor.py <key1> <key2> ... <input1.parquet> <input2.parquet> ...") or sys.exit(1)
-    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_merged.parquet"
-    run = lambda keys, input_files: (
-        print(f"[PROC] Merging {len(input_files)} modalities on keys: {keys}") or
-        (lambda dfs:
-            (lambda merged:
-                print(f"[PROC] Loaded shapes: {[df.shape for df in dfs]}") or
-                print(f"[PROC] Merged DataFrame shape: {merged.shape}") or
-                merged.write_parquet(get_output_filename(input_files[0])) or
-                print(f"[PROC] Merge finished. Output: {get_output_filename(input_files[0])}")
-            )(
-                functools.reduce(
-                    lambda acc, df: acc.join(df, on=keys, how='inner', suffix=f'_mod'),
-                    dfs[1:],
-                    dfs[0] if dfs else pl.DataFrame([])
-                )
-            )
-        )([pl.read_parquet(f) for f in input_files])
-    )
-    try:
-        args = sys.argv
-        if len(args) < 3:
-            usage()
-        else:
-            keys = [k for k in args[1:] if not k.endswith('.parquet')]
-            input_files = [f for f in args[1:] if f.endswith('.parquet')]
-            run(keys, input_files)
-    except Exception as e:
-        print(f"[PROC] Error: {e}")
-        sys.exit(1)
+
+def merge_files(keys: list[str], files: list[str]) -> str:
+    for f in files:
+        if not os.path.exists(f): print(f"[merging] Error: File not found: {f}"); sys.exit(1)
+    if not keys: print("[merging] Error: No join keys specified"); sys.exit(1)
+    if len(files) < 2: print("[merging] Error: Need at least 2 files to merge"); sys.exit(1)
+    print(f"[merging] Merging {len(files)} files on keys: {keys}")
+    dfs = [pl.read_parquet(f) for f in files]
+    for i, df in enumerate(dfs):
+        missing = [k for k in keys if k not in df.columns]
+        if missing: print(f"[merging] Error: Keys {missing} not in {files[i]}"); sys.exit(1)
+    merged = functools.reduce(lambda acc, df: acc.join(df, on=keys, how='inner', suffix='_mod'), dfs[1:], dfs[0])
+    out = f"{os.path.splitext(os.path.basename(files[0]))[0]}_merged.parquet"
+    merged.write_parquet(out)
+    print(f"[merging] Output: {out} ({merged.shape})")
+    return out
+
+if __name__ == '__main__': (lambda a: merge_files([k for k in a[1:] if not k.endswith('.parquet')], [f for f in a[1:] if f.endswith('.parquet')]) if len(a) >= 3 else (print('[merging] Merge multiple parquet files on shared key columns.\nUsage: merging_processor.py <key1> [key2...] <f1.parquet> <f2.parquet> ...'), sys.exit(1)))(sys.argv)

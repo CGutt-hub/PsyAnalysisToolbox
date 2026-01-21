@@ -39,6 +39,9 @@ workflow workflow_wrapper {
             def safe_id = pid.replaceAll('\r', '').trim().replaceAll('[^A-Za-z0-9._-]', '_')
             def folder_path = new File("${workflow.launchDir}/${output_dir}/${safe_id}")
             folder_path.mkdirs()
+            // Create pipeline.log early so IOInterface can append to it
+            def log_file = new File(folder_path, "pipeline.log")
+            log_file.text = "=== Pipeline started: ${new Date().format('yyyy-MM-dd HH:mm:ss')} for ${safe_id} ===\n"
             def folder = "${output_dir}/${safe_id}"
             [pid, folder] // Return tuple [participant_id, output_folder]
         }
@@ -48,7 +51,7 @@ workflow workflow_wrapper {
 }
 
 // Process to finalize a participant after all processing completes
-// Consolidates logs and syncs to git - triggered automatically by dependency graph
+// Syncs to git - triggered automatically by dependency graph
 process finalize_participant {
     maxForks 1  // Serialize git operations to avoid lock conflicts
     
@@ -60,20 +63,11 @@ process finalize_participant {
     script:
     """
     #!/bin/bash
-    set -e
     
-    participant="${participant_id}"
     output_dir="${workflow.launchDir}/${output_folder}"
-    log_file="\${output_dir}/module_logs.txt"
+    log_file="\${output_dir}/pipeline.log"
     
-    echo "=== Finalizing ${participant_id} ==="
-    
-    # Find and consolidate logs
-    find "${workflow.workDir}" -type f -name ".command.log" -path "*\${participant}*" -print0 | 
-        sort -z | 
-        xargs -0 cat > "\${log_file}" 2>/dev/null || true
-    
-    echo "Logs consolidated: \${log_file}"
+    echo "=== Pipeline completed: \$(date '+%Y-%m-%d %H:%M:%S') for ${participant_id} ===" >> "\${log_file}"
     
     # Git sync
     cd "${workflow.launchDir}"
@@ -92,7 +86,7 @@ process IOInterface {
         val env_exe             // Executable path (python, java, rust binary, etc.)
         val script              // Script path relative to workflow.launchDir
         path input              // Input file(s) - automatically staged by Nextflow
-        val params              // Additional arguments
+        val extraParams         // Additional arguments (renamed to avoid shadowing Nextflow params)
 
     output:
         path "*.{fif,parquet}"
@@ -108,8 +102,8 @@ process IOInterface {
     
     // Format additional args: smart split that preserves bracketed/braced structures
     def extraArgs = ""
-    if (params && params.toString().trim() != "") {
-        def paramStr = params.toString().trim()
+    if (extraParams && extraParams.toString().trim() != "") {
+        def paramStr = extraParams.toString().trim()
         
         // Parse arguments respecting brackets and braces
         def args = []
@@ -151,7 +145,29 @@ process IOInterface {
     }
     
     """
-    ${env_exe} "${workflow.launchDir}/${script}" ${inputArgs} ${extraArgs}
+    # Extract participant ID from input filename (pattern like EV_002_*)
+    INPUT_FILE=\$(basename "${inputArgs}" | sed "s/'//g")
+    PARTICIPANT_ID=\$(echo "\$INPUT_FILE" | grep -oE '^[A-Za-z]+_[0-9]+' | head -1)
+    
+    # Append to participant log file with timestamps
+    if [ -n "\$PARTICIPANT_ID" ]; then
+        LOG_FILE="${workflow.launchDir}/${params.output_dir}/\${PARTICIPANT_ID}/pipeline.log"
+        TEMP_OUT=\$(mktemp)
+        ${env_exe} -u "${workflow.launchDir}/${script}" ${inputArgs} ${extraArgs} 2>&1 | tee "\$TEMP_OUT"
+        EXIT_CODE=\${PIPESTATUS[0]}
+        # Add timestamp to each line before appending to log
+        while IFS= read -r line; do
+            echo "\$(date '+%Y-%m-%d %H:%M:%S') \$line" >> "\$LOG_FILE"
+        done < "\$TEMP_OUT"
+        if [ \$EXIT_CODE -ne 0 ]; then
+            echo "" >> "\$LOG_FILE"
+            echo "\$(date '+%Y-%m-%d %H:%M:%S') [ERROR] Exit code \$EXIT_CODE" >> "\$LOG_FILE"
+        fi
+        rm -f "\$TEMP_OUT"
+        exit \$EXIT_CODE
+    else
+        ${env_exe} -u "${workflow.launchDir}/${script}" ${inputArgs} ${extraArgs}
+    fi
     """
 }
 

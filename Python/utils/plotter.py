@@ -11,7 +11,7 @@ attach = lambda t, o, i: ((lambda r, w: ([w.add_page(p) for p in r.pages], w.add
 
 def plot(df, pdf_path):
     """Generic plotter: handles concatenated data from concatenating_processor."""
-    print(f"[PLOT] Plotting started: {pdf_path}")
+    print(f"[plotter] Plotting started: {pdf_path}")
     pdf = PdfPages(pdf_path)
     row = df.to_dicts()[0]
     x_data, y_data, y_var, labels, plot_type = to_lst(row['x_data']), to_lst(row['y_data']), to_lst(row.get('y_var', [])), to_lst(row.get('labels', [])), row['plot_type']
@@ -19,14 +19,14 @@ def plot(df, pdf_path):
     colors = ['dimgray', 'darkgray', 'gray', 'lightgray', 'silver']
     lbl = lambda i: labels[i] if i < len(labels) else f'Dataset {i+1}'
     
-    print(f"[PLOT] Plot type: {plot_type}, Concatenated: {is_concat}, Labels: {labels if labels else 'none'}")
+    print(f"[plotter] Plot type: {plot_type}, Concatenated: {is_concat}, Labels: {labels if labels else 'none'}")
     
     # Grid layout for line_grid or grid: separate subplot per condition
     if (plot_type == 'line_grid' or plot_type == 'grid') and is_concat:
         n_plots = len(x_data)
         n_cols = min(3, n_plots)
         n_rows = (n_plots + n_cols - 1) // n_cols
-        print(f"[PLOT] Creating grid: {n_rows}x{n_cols} for {n_plots} conditions")
+        print(f"[plotter] Creating grid: {n_rows}x{n_cols} for {n_plots} conditions")
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
         axes = axes.flatten() if n_plots > 1 else [axes]
         
@@ -63,7 +63,15 @@ def plot(df, pdf_path):
                 ax.bar(range(len(yd_list)), yd_list, yerr=yerr_safe, color='dimgray', alpha=0.85, capsize=4, error_kw={'linewidth': 1.5})
                 ax.set_xticks(range(len(xd_list)))
                 ax.set_xticklabels([truncate(x) for x in xd_list], rotation=45, ha='right', fontsize=9)
-                ax.set_ylim(global_y_lim)
+                # Check if y_ticks or y_labels override is set (for fixed Y-axis limits)
+                yt = row.get('y_ticks')
+                yl = row.get('y_labels')
+                if yt and isinstance(yt, (int, float)):
+                    ax.set_ylim(0.5, yt + 0.5)
+                elif yl and isinstance(yl, (list, tuple)) and len(yl) > 2:
+                    ax.set_ylim(0.5, len(yl) + 0.5)
+                else:
+                    ax.set_ylim(global_y_lim)
             else:
                 # For 'line_grid' type, create line plot
                 ax.plot(xd_list, yd_list, linewidth=2.5, alpha=0.85, color='dimgray')
@@ -79,11 +87,42 @@ def plot(df, pdf_path):
                 
                 if global_x_lim:
                     ax.set_xlim(global_x_lim)
-                ax.set_ylim(global_y_lim)
+                # Check if y_ticks override is set (for fixed Y-axis limits across participants)
+                yt = row.get('y_ticks')
+                if yt and isinstance(yt, (int, float)):
+                    ax.set_ylim(0, yt)
+                else:
+                    ax.set_ylim(global_y_lim)
             
             ax.set_title(lbl(i), fontsize=14, fontweight='bold')
             ax.set_xlabel(row.get('x_label', '') if plot_type == 'line_grid' else row.get('x_axis', ''), fontsize=12)
             ax.set_ylabel(row.get('y_label', ''), fontsize=12)
+            # Apply y_ticks/y_labels for questionnaire scale labels (grid/bar plots only)
+            yt = row.get('y_ticks')
+            yl = row.get('y_labels')
+            if plot_type == 'grid':
+                if yt and isinstance(yt, int):
+                    # y_ticks is int: use as scale max
+                    ax.set_yticks(list(range(1, yt + 1)))
+                    if yl and isinstance(yl, (list, tuple)) and len(yl) == 2:
+                        # 2 labels: endpoints only
+                        labels = [''] * yt
+                        labels[0] = str(yl[0])
+                        labels[-1] = str(yl[1])
+                        ax.set_yticklabels(labels, fontsize=9)
+                    elif yl and isinstance(yl, (list, tuple)) and len(yl) == 3:
+                        # 3 labels: bottom, middle, top (requires odd y-max for true center)
+                        labels = [''] * yt
+                        labels[0] = str(yl[0])
+                        labels[(yt - 1) // 2] = str(yl[1])
+                        labels[-1] = str(yl[2])
+                        ax.set_yticklabels(labels, fontsize=9)
+                    # else: numeric ticks (SAM case)
+                elif yl and isinstance(yl, (list, tuple)) and len(yl) > 2:
+                    # Full labels list (PANAS, BISBAS): use length as scale, all labeled
+                    ax.set_yticks(list(range(1, len(yl) + 1)))
+                    ax.set_yticklabels(yl, fontsize=9)
+                    ax.set_ylim(0.5, len(yl) + 0.5)
             ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.8)
             [ax.spines[s].set_visible(False) for s in ['top', 'right']]
             [ax.spines[s].set_linewidth(1.2) for s in ['left', 'bottom']]
@@ -111,11 +150,11 @@ def plot(df, pdf_path):
         plt.tight_layout()
     
     pdf.savefig(fig, bbox_inches='tight', dpi=300); plt.close(fig); pdf.close()
-    print(f"[PLOT] Plotting finished: {pdf_path}")
+    print(f"[plotter] Plotting finished: {pdf_path}")
     return pdf_path
 
 def run(inp, out_dir, pre):
-    print(f"[PLOT] Input: {inp}, Output dir: {out_dir}, Prefix: {pre}")
+    print(f"[plotter] Input: {inp}, Output dir: {out_dir}, Prefix: {pre}")
     df = pl.read_parquet(inp); os.makedirs(out_dir, exist_ok=True)
     tf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf'); tf_path = (plot(df, tf.name), tf.close(), tf.name)[2]
     out_pdf = os.path.join(out_dir, f"{pre}.pdf")
@@ -132,8 +171,8 @@ def run(inp, out_dir, pre):
     sig = f"{sanitize(pre)}_plot.parquet"
     pl.DataFrame({'signal': [1], 'source_parquet': [os.path.basename(inp)], 'output_prefix': [pre], 'pdf_path': [out_pdf]}).write_parquet(sig + '.tmp')
     os.replace(sig + '.tmp', sig)
-    print(f"[PLOT] Output PDF: {out_pdf}")
-    print(f"[PLOT] Signal file: {sig}")
+    print(f"[plotter] Output PDF: {out_pdf}")
+    print(f"[plotter] Signal file: {sig}")
     print(sig)
     return out_pdf
 

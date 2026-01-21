@@ -3,7 +3,7 @@ from scipy.signal import hilbert, butter, filtfilt
 from numpy.typing import NDArray
 from typing import Any
 
-def compute_plv(stream_paths: list[str], stream_configs: list[dict[str, Any]], output_name: str) -> str:
+def compute_plv(stream_paths: list[str], stream_configs: list[dict[str, Any]], output_name: str, y_lim: float | None = None) -> str:
     """
     Compute PLV between arbitrary number of streams.
     
@@ -12,10 +12,11 @@ def compute_plv(stream_paths: list[str], stream_configs: list[dict[str, Any]], o
         stream_configs: List of dicts with 'type', 'channels'/'column', 'freq_band', 'sfreq' for each stream
                        type: 'continuous' (EEG, EDA) or 'event' (HRV R-peaks)
         output_name: Base name for output files
+        y_lim: Optional Y-axis maximum limit for consistent scaling across participants
     """
-    print(f"[PLV] Loading {len(stream_paths)} streams")
+    print(f"[plv] Loading {len(stream_paths)} streams")
     for i, (path, cfg) in enumerate(zip(stream_paths, stream_configs)):
-        print(f"[PLV]   Stream {i+1}: {os.path.basename(path)} ({cfg['type']})")
+        print(f"[plv]   Stream {i+1}: {os.path.basename(path)} ({cfg['type']})")
     
     # Load all streams
     streams = [pl.read_parquet(path) for path in stream_paths]
@@ -25,7 +26,7 @@ def compute_plv(stream_paths: list[str], stream_configs: list[dict[str, Any]], o
     os.makedirs(out_folder, exist_ok=True)
     
     conditions = sorted(streams[0]['condition'].unique().to_list())
-    print(f"[PLV] Processing {len(conditions)} conditions: {conditions}")
+    print(f"[plv] Processing {len(conditions)} conditions: {conditions}")
     
     # Prepare filters for continuous streams
     filters = []
@@ -151,12 +152,13 @@ def compute_plv(stream_paths: list[str], stream_configs: list[dict[str, Any]], o
                 'y_var': [result_df['plv_sem'].to_list()],
                 'plot_type': ['bar'],
                 'x_label': ['Stream Pair'],
-                'y_label': ['Phase-Locking Value (PLV)']
+                'y_label': ['Phase-Locking Value (PLV)'],
+                'y_ticks': [y_lim] if y_lim is not None else [None]
             })
             
             out_file = os.path.join(out_folder, f"{output_name}_plv{idx+1}.parquet")
             output.write_parquet(out_file)
-            print(f"[PLV]   {cond}: {os.path.basename(out_file)} ({len(plv_results)} pairs)")
+            print(f"[plv]   {cond}: {os.path.basename(out_file)} ({len(plv_results)} pairs)")
     
     # Signal file
     signal_path = os.path.join(workspace, f"{output_name}_plv.parquet")
@@ -167,15 +169,7 @@ def compute_plv(stream_paths: list[str], stream_configs: list[dict[str, Any]], o
         'folder_path': [os.path.abspath(out_folder)]
     }).write_parquet(signal_path)
     
-    print(f"[PLV] Finished. Signal: {os.path.basename(signal_path)}")
+    print(f"[plv] Finished. Signal: {os.path.basename(signal_path)}")
     return signal_path
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print('[PLV] Usage: python plv_analyzer.py <config_dict>')
-        print('[PLV] Example: python plv_analyzer.py "{"streams": ["eeg.parquet", "hrv.parquet"], "configs": [{"type": "continuous", "channels": ["F3", "Fz"], "freq_band": [8, 13], "sfreq": 1000}, {"type": "event", "column": "time"}], "output_name": "EV_002_plv"}"')
-        sys.exit(1)
-    
-    # Parse config
-    config = ast.literal_eval(sys.argv[1])
-    compute_plv(config['streams'], config['configs'], config['output_name'])
+if __name__ == '__main__': (lambda a: compute_plv(ast.literal_eval(a[1])['streams'], ast.literal_eval(a[1])['configs'], ast.literal_eval(a[1])['output_name'], float(a[2]) if len(a) > 2 and a[2] else None) if len(a) >= 2 else (print('Compute Phase Locking Value between streams. Plot-ready output.\n[plv] Usage: plv_analyzer.py <config_dict> [y_lim]'), sys.exit(1)))(sys.argv)

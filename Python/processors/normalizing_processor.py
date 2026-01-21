@@ -1,51 +1,22 @@
 import polars as pl, numpy as np, sys, os
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 
-if __name__ == "__main__":
-    usage = lambda: print("[PROC] Usage: python normalization_processor.py <input_parquet> <normalization_type> <data_columns> [group_by_columns]") or sys.exit(1)
-    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_normalized.parquet"
-    
-    run = lambda input_parquet, normalization_type, data_columns, group_by_columns: (
-        print(f"[PROC] Generic normalization started for: {input_parquet}") or
-        (lambda df:
-            (lambda column_list:
-                (lambda group_cols:
-                    (lambda normalized_df:
-                        normalized_df.write_parquet(get_output_filename(input_parquet)) or
-                        print(f"[PROC] Generic normalization finished. Output: {get_output_filename(input_parquet)}")
-                    )(
-                        # Apply normalization to specified columns
-                        df.with_columns([
-                            (lambda norm_type:
-                                # Z-score normalization
-                                (pl.col(col) - pl.col(col).mean()) / pl.col(col).std() if norm_type == 'zscore' else
-                                # Min-Max normalization 
-                                (pl.col(col) - pl.col(col).min()) / (pl.col(col).max() - pl.col(col).min()) if norm_type == 'minmax' else
-                                # Robust normalization (median and MAD)
-                                (pl.col(col) - pl.col(col).median()) / (pl.col(col).quantile(0.75) - pl.col(col).quantile(0.25)) if norm_type == 'robust' else
-                                # Log transformation
-                                pl.col(col).log() if norm_type == 'log' else
-                                # Unit vector normalization
-                                pl.col(col) / pl.col(col).map_elements(lambda x: np.sqrt(np.sum(np.array(x)**2)), return_dtype=pl.Float64) if norm_type == 'unit' else
-                                # Default: return original
-                                pl.col(col)
-                            )(normalization_type.lower()).alias(f"{col}_normalized")
-                            for col in column_list
-                        ])
-                    )
-                )(group_by_columns.split(',') if group_by_columns and group_by_columns.strip() else [])
-            )(data_columns.split(',') if isinstance(data_columns, str) else data_columns)
-        )(pl.read_parquet(input_parquet))
-    )
-    
-    try:
-        args = sys.argv
-        if len(args) < 4:
-            usage()
-        else:
-            input_parquet, normalization_type, data_columns = args[1], args[2], args[3]
-            group_by_columns = args[4] if len(args) > 4 else ""
-            run(input_parquet, normalization_type, data_columns, group_by_columns)
-    except Exception as e:
-        print(f"[PROC] Error: {e}")
-        sys.exit(1)
+def normalize(ip: str, norm_type: str, cols: str) -> str:
+    if not os.path.exists(ip): print(f"[normalizing] Error: File not found: {ip}"); sys.exit(1)
+    print(f"[normalizing] Normalizing ({norm_type}): {ip}")
+    df = pl.read_parquet(ip)
+    col_list = cols.split(',')
+    missing = [c for c in col_list if c not in df.columns]
+    if missing: print(f"[normalizing] Error: Columns not found: {missing}"); sys.exit(1)
+    for col in col_list:
+        df = df.with_columns((
+            (pl.col(col) - pl.col(col).mean()) / pl.col(col).std() if norm_type == 'zscore' else
+            (pl.col(col) - pl.col(col).min()) / (pl.col(col).max() - pl.col(col).min()) if norm_type == 'minmax' else
+            (pl.col(col) - pl.col(col).median()) / (pl.col(col).quantile(0.75) - pl.col(col).quantile(0.25)) if norm_type == 'robust' else
+            pl.col(col).log() if norm_type == 'log' else pl.col(col)
+        ).alias(f"{col}_norm"))
+    out = f"{os.path.splitext(os.path.basename(ip))[0]}_norm.parquet"
+    df.write_parquet(out)
+    print(f"[normalizing] Output: {out}")
+    return out
+
+if __name__ == '__main__': (lambda a: normalize(a[1], a[2], a[3]) if len(a) >= 4 else (print('[normalizing] Normalize columns using zscore, minmax, robust, or log scaling.\nUsage: normalizing_processor.py <input.parquet> <zscore|minmax|robust|log> <col1,col2,...>'), sys.exit(1)))(sys.argv)

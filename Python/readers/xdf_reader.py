@@ -22,6 +22,14 @@ def get_stream_type(stream):
     info = stream.get('info', {})
     return info.get('type', [None])[0] if isinstance(info.get('type'), list) else info.get('type', None)
 
+def get_stream_name(stream):
+    info = stream.get('info', {})
+    name = info.get('name', [None])[0] if isinstance(info.get('name'), list) else info.get('name', None)
+    # Sanitize name for filename use (remove special chars)
+    if name:
+        return ''.join(c if c.isalnum() or c in '-_' else '' for c in name)
+    return None
+
 make_df = lambda s: (lambda ts, data, names: pl.DataFrame({'time': ts, **{names[j]: data[:, j] for j in range(len(names))}}) if names and len(ts) > 0 else pl.DataFrame({'time': ts, **{f'column_{j}': data[:, j] for j in range(data.shape[1] if hasattr(data, 'shape') else (len(data[0]) if len(data) > 0 else 0))}}) if len(ts) > 0 else pl.DataFrame({'time': [], 'empty': []}))(s.get('time_stamps', []), np.array(s.get('time_series', [])), get_ch_names(s))
 
 def save_as_mne(stream, out_path, stream_type):
@@ -43,15 +51,24 @@ def save_as_mne(stream, out_path, stream_type):
     return True
 
 def read_xdf(ip):
-    print(f"[READER] Loading: {ip}")
+    print(f"[xdf_reader] Loading: {ip}")
+    print(f"[xdf_reader] File size: {os.path.getsize(ip) / (1024*1024):.1f} MB - this may take a while...")
+    import time
+    t0 = time.time()
     streams = pyxdf.load_xdf(ip)[0]
+    print(f"[xdf_reader] Loaded {len(streams)} streams in {time.time()-t0:.1f}s")
     base = os.path.splitext(os.path.basename(ip))[0]
     workspace_root = os.getcwd()
     out_folder = os.path.join(workspace_root, f"{base}_xdf")
     os.makedirs(out_folder, exist_ok=True)
     
+    # Collect stream info for signal file
+    stream_info = []
+    
     for i, s in enumerate(streams):
-        stream_type = get_stream_type(s)
+        stream_type = get_stream_type(s) or 'Unknown'
+        stream_name = get_stream_name(s) or 'stream'
+        # Keep numbered filenames for consistent module order
         fif_path = os.path.join(out_folder, f"{base}_xdf{i+1}.fif")
         parquet_path = os.path.join(out_folder, f"{base}_xdf{i+1}.parquet")
         # Save as MNE .fif (always attempt)
@@ -60,17 +77,36 @@ def read_xdf(ip):
             ch_names = get_ch_names(s)
             n_samples = len(s.get('time_stamps', []))
             n_channels = len(ch_names) if ch_names else 0
-            print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): {n_samples} samples, {n_channels} channels -> .fif")
+            print(f"[xdf_reader] Stream {i+1}/{len(streams)} ({stream_type}): {n_samples} samples, {n_channels} channels -> .fif")
         else:
-            print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): Empty or not suitable for .fif, skipped .fif")
+            print(f"[xdf_reader] Stream {i+1}/{len(streams)} ({stream_type}): Empty or not suitable for .fif, skipped .fif")
         # Save as parquet (always attempt)
         df = make_df(s)
         df.write_parquet(parquet_path)
-        print(f"[READER] Stream {i+1}/{len(streams)} ({stream_type}): {df.shape} -> .parquet")
+        print(f"[xdf_reader] Stream {i+1}/{len(streams)} ({stream_type}): {df.shape} -> .parquet")
+        
+        # Record stream info
+        stream_info.append({
+            'index': i+1,
+            'type': stream_type,
+            'name': stream_name,
+            'samples': len(s.get('time_stamps', [])),
+            'fif': os.path.basename(fif_path),
+            'parquet': os.path.basename(parquet_path)
+        })
     
+    # Write signal file with stream mapping
     signal_path = os.path.join(workspace_root, f"{base}_xdf.parquet")
-    pl.DataFrame({'signal': [1], 'source': [os.path.basename(ip)], 'streams': [len(streams)], 'folder_path': [os.path.abspath(out_folder)]}).write_parquet(signal_path)
-    print(f"[READER] Output: {signal_path}")
+    signal_df = pl.DataFrame({
+        'signal': [1], 
+        'source': [os.path.basename(ip)], 
+        'streams': [len(streams)], 
+        'folder_path': [os.path.abspath(out_folder)],
+        'stream_types': [','.join(s['type'] for s in stream_info)],
+        'stream_names': [','.join(s['name'] for s in stream_info)]
+    })
+    signal_df.write_parquet(signal_path)
+    print(f"[xdf_reader] Output: {signal_path}")
 
-if __name__ == '__main__': (lambda a: read_xdf(a[1]) if len(a) == 2 else (print("[READER] Usage: python xdf_reader.py <input.xdf>"), sys.exit(1)))(sys.argv)
+if __name__ == '__main__': (lambda a: read_xdf(a[1]) if len(a) == 2 else (print("[xdf_reader] Usage: python xdf_reader.py <input.xdf>"), sys.exit(1)))(sys.argv)
 

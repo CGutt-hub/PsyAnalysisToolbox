@@ -1,48 +1,22 @@
+"""ANOVA Analyzer - Perform ANOVA on epoched data with optional FDR correction."""
 import polars as pl, pingouin as pg, sys, os
-if __name__ == "__main__":
-    # Print usage and exit if arguments are missing
-    usage = lambda: print("Usage: python anova_analyzer.py <input_parquet> <dv> <between> <participant_id> [apply_fdr]") or sys.exit(1)
-    get_output_filename = lambda input_file: f"{os.path.splitext(os.path.basename(input_file))[0]}_anova.parquet"
-    run = lambda input_parquet, dv, between, participant_id, apply_fdr: (
-        print(f"[ANOVA] ANOVA analysis started for participant: {participant_id}"),
-        (lambda df: (
-            print(f"[ANOVA] Data loaded for ANOVA: shape={df.shape}"),
-            (lambda results: (
-                print(f"[ANOVA] ANOVA results calculated."),
-                (lambda d: (
-                    print(f"[ANOVA] FDR correction {'applied' if apply_fdr else 'skipped'}."),
-                    (lambda df_out: (
-                        print(f"[ANOVA] Writing ANOVA output for participant: {participant_id}"),
-                        # Add standardized plotting metadata
-                        df_out[1].with_columns([
-                            pl.lit("bar").alias("plot_type"),  # ANOVA results -> bar chart
-                            pl.lit("ordinal").alias("x_scale"),  # factor levels
-                            pl.lit("nominal").alias("y_scale"),  # F-statistics or p-values
-                            pl.col("Source").alias("x_data"),  # ANOVA source/factor names
-                            pl.col("F").alias("y_data"),  # F-statistics for plotting
-                            pl.lit("F-statistic").alias("y_label"),
-                            pl.lit(1).alias("plot_weight")
-                        ]).write_parquet(get_output_filename(input_parquet)),
-                        print(f"[ANOVA] ANOVA analysis finished for participant: {participant_id}")
-                    ))(d)
-                ))((
-                    (lambda fdr: (
-                        print(f"[ANOVA] FDR correction results: rejected={fdr[0]}, p_fdr={fdr[1]}"),
-                        results.with_columns([
-                            pl.Series("p_fdr", fdr[1]),
-                            pl.Series("rejected", fdr[0])
-                        ])
-                    ))(__import__('statsmodels.stats.multitest').stats.multitest.fdrcorrection(results['p-unc'].to_numpy()))
-                ) if apply_fdr else results)
-            ))(pl.DataFrame(pg.anova(data=df, dv=dv, between=between, detailed=True)))
-        ))(pl.read_parquet(input_parquet).to_pandas())
-    )
-    try:
-        args = sys.argv
-        if len(args) < 5:
-            usage()
-        else:
-            apply_fdr = (len(args) > 5 and args[5].lower() in ["1", "true", "yes"])
-            run(args[1], args[2], args[3], args[4], apply_fdr)
-    except Exception as e:
-        print(f"[ANOVA] ANOVA analysis errored for participant: {sys.argv[4] if len(sys.argv)>4 else 'UNKNOWN'}. Error: {e}"); sys.exit(1)
+import statsmodels.stats.multitest as mt
+
+def anova_analyze(ip: str, dv: str, between: str, participant_id: str, apply_fdr: bool = False, y_lim: float | None = None) -> str:
+    if not os.path.exists(ip): print(f"[anova] File not found: {ip}"); sys.exit(1)
+    print(f"[anova] ANOVA: {ip}, dv={dv}, between={between}, fdr={apply_fdr}")
+    df = pl.read_parquet(ip).to_pandas()
+    results = pl.DataFrame(pg.anova(data=df, dv=dv, between=between, detailed=True))
+    if apply_fdr:
+        rejected, p_fdr = mt.fdrcorrection(results['p-unc'].to_numpy())
+        results = results.with_columns([pl.Series("p_fdr", p_fdr), pl.Series("rejected", rejected)])
+    results = results.with_columns([
+        pl.lit("bar").alias("plot_type"), pl.lit("ordinal").alias("x_scale"), pl.lit("nominal").alias("y_scale"),
+        pl.col("Source").alias("x_data"), pl.col("F").alias("y_data"), pl.lit("F-statistic").alias("y_label"),
+        pl.lit(y_lim).alias("y_ticks"), pl.lit(1).alias("plot_weight")])
+    out_file = f"{os.path.splitext(os.path.basename(ip))[0]}_anova.parquet"
+    results.write_parquet(out_file)
+    print(f"[anova] Output: {out_file}")
+    return out_file
+
+if __name__ == '__main__': (lambda a: anova_analyze(a[1], a[2], a[3], a[4], len(a) > 5 and a[5].lower() in ['1','true','yes'], float(a[6]) if len(a) > 6 and a[6] else None) if len(a) >= 5 else (print('[anova] Perform ANOVA with optional FDR correction. Plot-ready output.\nUsage: anova_analyzer.py <input.parquet> <dv> <between> <participant_id> [apply_fdr=false] [y_lim]'), sys.exit(1)))(sys.argv)

@@ -22,39 +22,40 @@ def highpass(sig: NDArray[np.float64], lf: float, fs: float, order: int = 2) -> 
     return cast(NDArray[np.float64], scipy.signal.sosfiltfilt(sos, sig))
 
 def filter_signal(ip: str, col: str | None, lf: str, hf: str, fs: float = 1000.0, ftype: str = 'bandpass', out: str | None = None) -> str:
-    print(f"[PROC] Filtering: {ip}")
+    print(f"[filtering] Filtering: {ip}")
     
     # Handle MNE .fif files for multi-channel EEG/fNIRS
     if ip.endswith('.fif'):
         raw = mne.io.read_raw_fif(ip, preload=True, verbose=False)
-        print(f"[PROC] {ftype} filter on {len(raw.ch_names)} channels: {float(lf)}-{float(hf)} Hz")
+        print(f"[filtering] {ftype} filter on {len(raw.ch_names)} channels: {float(lf)}-{float(hf)} Hz")
         raw.filter(float(lf), float(hf), verbose=False)
         # Save in current working directory
         base = os.path.splitext(os.path.basename(ip))[0]
         out_file = out or f"{base}_filt.fif"
         raw.save(out_file, overwrite=True, verbose=False)
-        print(f"[PROC] Output (MNE Raw): {out_file}")
+        print(f"[filtering] Output (MNE Raw): {out_file}")
         return out_file
     
     # Handle Polars parquet files for single-channel signals
     df = pl.read_parquet(ip)
-    if not col: print(f"[PROC] Error: Column name required for parquet files"); sys.exit(1)
+    if not col: print(f"[filtering] Error: Column name required for parquet files"); sys.exit(1)
     target = next((c for c in df.columns if col.lower() in c.lower()), None)
-    if not target: print(f"[PROC] Error: Column '{col}' not found"); sys.exit(1)
+    if not target: print(f"[filtering] Error: Column '{col}' not found"); sys.exit(1)
     sig: NDArray[np.float64] = df[target].to_numpy()
-    print(f"[PROC] {ftype} filter on {target}: {len(sig)} samples")
+    print(f"[filtering] {ftype} filter on {target}: {len(sig)} samples")
     filtered = bandpass(sig, float(lf), float(hf), float(fs)) if ftype == 'bandpass' else lowpass(sig, float(hf), float(fs)) if ftype == 'lowpass' else highpass(sig, float(lf), float(fs))
     result = pl.DataFrame({'time': df['time'] if 'time' in df.columns else np.arange(len(filtered))/float(fs), target.lower(): filtered, 'sfreq': [float(fs)]*len(filtered)})
     base = os.path.splitext(os.path.basename(ip))[0]
     out_file = f"{base}_filt.parquet"
-    result.write_parquet(out_file); print(f"[PROC] Output: {out_file}"); return out_file
+    result.write_parquet(out_file); print(f"[filtering] Output: {out_file}"); return out_file
 
 if __name__ == '__main__': 
     args = sys.argv
     if len(args) < 4:
-        print("[PROC] Usage: python filtering_processor.py <input> <l_freq> <h_freq> [column] [fs] [ftype]")
-        print("[PROC]   For .fif: python filtering_processor.py <input.fif> <l_freq> <h_freq>")
-        print("[PROC]   For .parquet: python filtering_processor.py <input.parquet> <l_freq> <h_freq> <column> [fs]")
+        print("[filtering] Apply Butterworth bandpass/lowpass/highpass filter to time series.")
+        print("Usage: filtering_processor.py <input> <l_freq> <h_freq> [column] [fs] [ftype]")
+        print("  .fif:     filtering_processor.py <input.fif> <l_freq> <h_freq>")
+        print("  .parquet: filtering_processor.py <input.parquet> <l_freq> <h_freq> <column> [fs=1000] [ftype=bandpass]")
         sys.exit(1)
     
     # Parse arguments based on file type
