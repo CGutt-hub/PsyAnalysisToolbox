@@ -1,4 +1,24 @@
-import polars as pl, numpy as np, sys, os, json
+import polars as pl, numpy as np, sys, os, json, fnmatch, re
+
+def _match_channels(patterns: list[str], available: list[str]) -> list[str]:
+    """
+    Match channel patterns against available channel names.
+    Supports: exact match, glob patterns (*, ?), and regex (prefix with 're:').
+    """
+    matched = []
+    for pattern in patterns:
+        if pattern in available:
+            # Exact match
+            matched.append(pattern)
+        elif pattern.startswith('re:'):
+            # Regex pattern
+            regex = re.compile(pattern[3:])
+            matched.extend([ch for ch in available if regex.search(ch) and ch not in matched])
+        elif '*' in pattern or '?' in pattern or '[' in pattern:
+            # Glob/fnmatch pattern
+            matched.extend([ch for ch in available if fnmatch.fnmatch(ch, pattern) and ch not in matched])
+        # If no match found for this pattern, it's simply skipped
+    return matched
 
 def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None, 
                    x_label: str = 'ROI', y_label: str = 'Mean', suffix: str = 'roi') -> str:
@@ -8,7 +28,11 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
     
     Args:
         ip: Input parquet with epoched data (condition, epoch_id, time, channel_cols...)
-        groups_config: JSON string defining groups, e.g. {"DLPFC": ["S1_D1", "S2_D1"], "VMPFC": ["S3_D2"]}
+        groups_config: JSON string defining groups. Channel patterns support:
+                       - Exact match: "S1_D1"
+                       - Glob patterns: "1-*", "S?_D1", "[12]-*"
+                       - Regex (prefix with 're:'): "re:^[1-4]-.*"
+                       Example: {"DLPFC_L": ["1-*", "2-*"], "VMPFC": ["re:^[5-8]-"]}
         y_lim: Optional Y-axis maximum limit
         x_label: Label for x-axis (e.g., 'ROI', 'Brain Region')
         y_label: Label for y-axis (e.g., 'HbO2 Change (μM)', 'Mean Activity')
@@ -33,17 +57,18 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
     print(f"[group] Available channels ({len(ch_cols)}): {ch_cols[:10]}..." if len(ch_cols) > 10 else f"[group] Available channels: {ch_cols}")
     print(f"[group] Looking for ROIs: {list(groups.keys())}")
     
-    # Validate groups
+    # Validate groups with pattern matching
     valid_groups = {}
     for name, members in groups.items():
-        valid_chs = [ch for ch in members if ch in ch_cols]
+        valid_chs = _match_channels(members, ch_cols)
         if valid_chs:
             valid_groups[name] = valid_chs
+            print(f"[group]   '{name}': matched {len(valid_chs)} channels from {len(members)} patterns")
         else:
-            print(f"[group] Warning: ROI '{name}' has no valid channels, skipping")
+            print(f"[group] Warning: ROI '{name}' has no valid channels (patterns: {members}), skipping")
     
     if not valid_groups:
-        raise ValueError("No valid ROI groups found")
+        raise ValueError(f"No valid ROI groups found. Available channels: {ch_cols[:5]}{'...' if len(ch_cols) > 5 else ''}")
     
     group_names = list(valid_groups.keys())
     conditions = sorted(df['condition'].unique().to_list())
@@ -102,5 +127,6 @@ if __name__ == '__main__':
                                a[6] if len(a) > 6 else 'roi') if len(a) >= 3 else (
         print('Aggregate channels by ROIs per condition. Plot-ready output.'),
         print('[group] Usage: python group_analyzer.py <epoched.parquet> <groups_json> [y_lim] [x_label] [y_label] [suffix]'),
-        print('[group] Example: python group_analyzer.py data.parquet \'{"DLPFC": ["S1_D1"], "VMPFC": ["S2_D2"]}\' 0.5 "ROI" "HbO2 (μM)" fnirs'),
+        print('[group] Channel patterns: exact match, glob (*, ?, []), or regex (re:pattern)'),
+        print('[group] Example: python group_analyzer.py data.parquet \'{"DLPFC_L": ["1-*", "2-*"], "VMPFC": ["re:^[5-8]-"]}\' 0.5 "ROI" "HbO2 (μM)" fnirs'),
         sys.exit(1)))(sys.argv)
