@@ -7,8 +7,10 @@ def log_transform(data: NDArray[np.float64], baseline_samples: int) -> NDArray[n
     """Apply -log10(x/baseline) transform. Generic intensity→absorbance conversion.
     Used in spectroscopy (Beer-Lambert), fNIRS optical density, etc."""
     baseline_mean = data[:, :baseline_samples].mean(axis=1, keepdims=True)
-    baseline_mean = np.where(baseline_mean > 0, baseline_mean, 1e-10)  # Avoid log(0)
-    return -np.log10(data / baseline_mean)
+    baseline_mean = np.where(baseline_mean > 0, baseline_mean, 1e-10)  # Avoid div by 0
+    # Clamp data to positive values to avoid log(0) or log(negative)
+    data_safe = np.where(data > 0, data, 1e-10)
+    return -np.log10(data_safe / baseline_mean)
 
 def log_transform_process(ip: str, baseline_sec: str = '5.0', out: str | None = None) -> str:
     """Apply log transform to all channels. Input: .fif, Output: .fif"""
