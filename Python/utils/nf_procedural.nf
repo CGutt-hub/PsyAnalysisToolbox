@@ -49,14 +49,15 @@ workflow workflow_wrapper {
             def folder_path = new File("${workflow.launchDir}/${output_dir}/${safe_id}")
             folder_path.mkdirs()
             
-            // Create pipeline.log
-            def log_file = new File(folder_path, "pipeline.log")
+            // Create {participant_id}_pipeline.log
+            def log_file = new File(folder_path, "${safe_id}_pipeline.log")
             log_file.text = "=== Pipeline started: ${new Date().format('yyyy-MM-dd HH:mm:ss')} for ${safe_id} ===\n"
             
             // Start watchdog as background process
-            def trace_file = "${workflow.launchDir}/pipeline_trace.txt"
-            def launch_dir = workflow.launchDir
-            def terminals = terminal_processes
+            // Explicitly convert to String to avoid GString/Path type mismatches
+            def trace_file = "${workflow.launchDir}/pipeline_trace.txt".toString()
+            def launch_dir = workflow.launchDir.toString()
+            def terminals = terminal_processes.toString()
             
             Thread.start {
                 watchdog_monitor(safe_id, folder_path.absolutePath, trace_file, launch_dir, terminals)
@@ -74,12 +75,13 @@ workflow workflow_wrapper {
 def watchdog_monitor(String participant_id, String output_folder, String trace_file, 
                      String launch_dir, String terminal_processes) {
     def terminals = terminal_processes.split(',').collect { it.trim() } as Set
-    def poll_interval = 5000  // 5 seconds
-    def stable_threshold = 3  // Polls with no change before declaring done (when failures present)
+    def poll_interval = 3000  // 3 seconds
+    def stable_threshold = 2  // 2 polls (6s) with no change before declaring done with failures
     def stable_count = 0
     def last_task_count = 0
+    def log_file = new File(output_folder, "${participant_id}_pipeline.log")
     
-    println "[watchdog] Started for ${participant_id}, watching for terminals: ${terminals}"
+    log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Started for ${participant_id}, monitoring ${terminals.size()} terminal processes\n")
     
     while (true) {
         try {
@@ -89,8 +91,9 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
                 continue
             }
             
-            // Parse trace file for this participant's tasks
-            def lines = trace.readLines()
+            // Parse trace file - multi-line records with tab-separated headers
+            def content = trace.text
+            def lines = content.split('\n')
             if (lines.size() < 2) {
                 Thread.sleep(poll_interval)
                 continue
@@ -98,18 +101,40 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
             
             def header = lines[0].split('\t')
             def statusIdx = header.findIndexOf { it == 'status' }
-            def nameIdx = header.findIndexOf { it == 'name' }
             def processIdx = header.findIndexOf { it == 'process' }
             
-            def participant_tasks = lines[1..-1].findAll { line ->
-                line.contains(participant_id)
-            }.collect { line ->
-                def cols = line.split('\t')
-                [
-                    process: processIdx >= 0 && cols.size() > processIdx ? cols[processIdx].split(':')[-1].trim() : '',
-                    name: nameIdx >= 0 && cols.size() > nameIdx ? cols[nameIdx] : '',
-                    status: statusIdx >= 0 && cols.size() > statusIdx ? cols[statusIdx].trim() : ''
-                ]
+            if (statusIdx < 0 || processIdx < 0) {
+                Thread.sleep(poll_interval)
+                continue
+            }
+            
+            // Parse records - lines starting with digit+tab are record headers
+            def participant_tasks = []
+            def i = 1
+            while (i < lines.size()) {
+                def line = lines[i]
+                if (line =~ /^\d+\t/) {
+                    def cols = line.split('\t')
+                    // Collect full record content
+                    def recordContent = new StringBuilder(line)
+                    def j = i + 1
+                    while (j < lines.size() && !(lines[j] =~ /^\d+\t/)) {
+                        recordContent.append('\n').append(lines[j])
+                        j++
+                    }
+                    
+                    // Check if record belongs to this participant
+                    if (recordContent.toString().contains(participant_id)) {
+                        def process = cols.size() > processIdx ? cols[processIdx].split(':')[-1].trim() : ''
+                        def status = cols.size() > statusIdx ? cols[statusIdx].trim() : ''
+                        if (process && status) {
+                            participant_tasks << [process: process, status: status]
+                        }
+                    }
+                    i = j
+                } else {
+                    i++
+                }
             }
             
             if (participant_tasks.isEmpty()) {
@@ -117,7 +142,7 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
                 continue
             }
             
-            // Analyze branch completion
+            // Count completed terminals and failed processes
             def completed_terminals = participant_tasks.findAll { 
                 it.status == 'COMPLETED' && it.process in terminals 
             }.collect { it.process } as Set
@@ -126,7 +151,7 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
                 it.status in ['FAILED', 'ABORTED'] 
             }.collect { it.process } as Set
             
-            // Track stability (no new tasks)
+            // Track stability (task count not changing)
             def current_count = participant_tasks.size()
             if (current_count == last_task_count) {
                 stable_count++
@@ -135,12 +160,17 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
                 last_task_count = current_count
             }
             
-            // Check if done: all terminals completed, OR failures + stable (no more tasks coming)
-            def all_done = completed_terminals.size() == terminals.size()
-            def failed_and_stable = !failed_processes.isEmpty() && stable_count >= stable_threshold
+            // Success: all terminal processes completed - finalize immediately
+            if (completed_terminals.size() == terminals.size()) {
+                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] All ${terminals.size()} terminals completed\n")
+                watchdog_finalize(participant_id, output_folder, launch_dir, 
+                                  completed_terminals, failed_processes, terminals.size())
+                break
+            }
             
-            if (all_done || failed_and_stable) {
-                // Finalize
+            // Partial: failures present + stable (no new tasks) - finalize with partial results
+            if (!failed_processes.isEmpty() && stable_count >= stable_threshold) {
+                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Partial: ${completed_terminals.size()}/${terminals.size()} completed, ${failed_processes.size()} failed\n")
                 watchdog_finalize(participant_id, output_folder, launch_dir, 
                                   completed_terminals, failed_processes, terminals.size())
                 break
@@ -149,7 +179,7 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
             Thread.sleep(poll_interval)
             
         } catch (Exception e) {
-            println "[watchdog] Error for ${participant_id}: ${e.message}"
+            log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Error: ${e.message}\n")
             Thread.sleep(poll_interval)
         }
     }
@@ -159,7 +189,7 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
 def watchdog_finalize(String participant_id, String output_folder, String launch_dir,
                       Set completed, Set failed, int total_terminals) {
     def timestamp = new Date().format('yyyy-MM-dd HH:mm:ss')
-    def log_file = new File(output_folder, 'pipeline.log')
+    def log_file = new File(output_folder, "${participant_id}_pipeline.log")
     
     // Append completion to log
     log_file.append("\n=== Pipeline completed: ${timestamp} for ${participant_id} ===\n")
@@ -168,29 +198,30 @@ def watchdog_finalize(String participant_id, String output_folder, String launch
         log_file.append("=== Failed processes: ${failed.sort().join(', ')} ===\n")
     }
     
-    // Git sync - acquire lock to prevent concurrent git operations from multiple watchdogs
+    // Git sync with lock to prevent race conditions between participants
+    def results_dir = new File(output_folder).parentFile.absolutePath
+    
     git_lock.lock()
     try {
-        def git_check = ["git", "-C", launch_dir, "status", "--porcelain"].execute()
-        git_check.waitFor()
-        def changes = git_check.text.trim()
+        def git_status = ["git", "-C", results_dir, "status", "--porcelain"].execute()
+        git_status.waitFor()
         
-        if (changes) {
-            ["git", "-C", launch_dir, "add", "."].execute().waitFor()
-            def commit_msg = "Results: ${participant_id} (${completed.size()}/${total_terminals}) ${new Date().format('yyyy-MM-dd_HH-mm-ss')}"
-            ["git", "-C", launch_dir, "commit", "-m", commit_msg].execute().waitFor()
-            ["git", "-C", launch_dir, "push"].execute().waitFor()
-            log_file.append("${timestamp} [git_sync] Synced: ${commit_msg}\n")
+        if (git_status.text.trim()) {
+            ["git", "-C", results_dir, "add", "."].execute().waitFor()
+            def msg = "Results: ${participant_id} (${completed.size()}/${total_terminals})"
+            ["git", "-C", results_dir, "commit", "-m", msg].execute().waitFor()
+            ["git", "-C", results_dir, "push"].execute().waitFor()
+            log_file.append("${timestamp} [git] Synced: ${msg}\n")
         } else {
-            log_file.append("${timestamp} [git_sync] No changes to commit\n")
+            log_file.append("${timestamp} [git] No changes\n")
         }
     } catch (Exception e) {
-        log_file.append("${timestamp} [git_sync] Error: ${e.message}\n")
+        log_file.append("${timestamp} [git] Error: ${e.message}\n")
     } finally {
         git_lock.unlock()
     }
     
-    println "[watchdog] Finalized ${participant_id}: ${completed.size()}/${total_terminals} branches succeeded"
+    log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Done\n")
 }
 
 // Generic IOInterface: exe script input params
@@ -271,7 +302,7 @@ process IOInterface {
     
     # Run processing with logging
     if [ -n "\$PARTICIPANT_ID" ]; then
-        LOG_FILE="${workflow.launchDir}/${params.output_dir}/\${PARTICIPANT_ID}/pipeline.log"
+        LOG_FILE="${workflow.launchDir}/${params.output_dir}/\${PARTICIPANT_ID}/\${PARTICIPANT_ID}_pipeline.log"
         TEMP_OUT=\$(mktemp)
         ${env_exe} -u "${workflow.launchDir}/${script}" ${inputArgs} ${extraArgs} 2>&1 | tee "\$TEMP_OUT"
         EXIT_CODE=\${PIPESTATUS[0]}

@@ -3,7 +3,8 @@ import polars as pl, numpy as np, sys, os, json, fnmatch, re
 def _match_channels(patterns: list[str], available: list[str]) -> list[str]:
     """
     Match channel patterns against available channel names.
-    Supports: exact match, glob patterns (*, ?), and regex (prefix with 're:').
+    Supports: exact match, prefix match, glob patterns (*, ?), and regex (prefix with 're:').
+    If no wildcards and no exact match, tries prefix matching (e.g., '1-1:1' matches '1-1:1-0').
     """
     matched = []
     for pattern in patterns:
@@ -17,7 +18,11 @@ def _match_channels(patterns: list[str], available: list[str]) -> list[str]:
         elif '*' in pattern or '?' in pattern or '[' in pattern:
             # Glob/fnmatch pattern
             matched.extend([ch for ch in available if fnmatch.fnmatch(ch, pattern) and ch not in matched])
-        # If no match found for this pattern, it's simply skipped
+        else:
+            # Try prefix match (e.g., '1-1:1' matches '1-1:1-0', '1-1:1-1', etc.)
+            prefix_matches = [ch for ch in available if ch.startswith(pattern) and ch not in matched]
+            if prefix_matches:
+                matched.extend(prefix_matches)
     return matched
 
 def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None, 
@@ -101,7 +106,7 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
             'x_data': [group_names],
             'y_data': [roi_means],
             'y_var': [roi_sems],
-            'plot_type': ['bar'],
+            'plot_type': ['grid'],  # Use 'grid' to match plotter's bar-grid layout
             'x_label': [x_label],
             'y_label': [y_label],
             'y_ticks': [y_lim] if y_lim is not None else [None]

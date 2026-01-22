@@ -14,7 +14,15 @@ def plot(df, pdf_path):
     print(f"[plotter] Plotting started: {pdf_path}")
     pdf = PdfPages(pdf_path)
     row = df.to_dicts()[0]
-    x_data, y_data, y_var, labels, plot_type = to_lst(row['x_data']), to_lst(row['y_data']), to_lst(row.get('y_var', [])), to_lst(row.get('labels', [])), row['plot_type']
+    x_data, y_data, y_var, labels = to_lst(row['x_data']), to_lst(row['y_data']), to_lst(row.get('y_var', [])), to_lst(row.get('labels', []))
+    # Extract plot_type - handle nested lists from concatenation
+    raw_plot_type = row['plot_type']
+    if isinstance(raw_plot_type, list):
+        plot_type = raw_plot_type[0] if raw_plot_type else 'bar'
+        if isinstance(plot_type, list):
+            plot_type = plot_type[0] if plot_type else 'bar'
+    else:
+        plot_type = raw_plot_type
     is_concat = x_data and isinstance(x_data[0], (list, tuple))
     colors = ['dimgray', 'darkgray', 'gray', 'lightgray', 'silver']
     lbl = lambda i: labels[i] if i < len(labels) else f'Dataset {i+1}'
@@ -27,7 +35,8 @@ def plot(df, pdf_path):
         n_cols = min(3, n_plots)
         n_rows = (n_plots + n_cols - 1) // n_cols
         print(f"[plotter] Creating grid: {n_rows}x{n_cols} for {n_plots} conditions")
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
+        # Add extra space at top for suptitle
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows + 0.5))
         axes = axes.flatten() if n_plots > 1 else [axes]
         
         # Calculate global axis limits for consistent scaling across all subplots
@@ -63,6 +72,10 @@ def plot(df, pdf_path):
                 ax.bar(range(len(yd_list)), yd_list, yerr=yerr_safe, color='dimgray', alpha=0.85, capsize=4, error_kw={'linewidth': 1.5})
                 ax.set_xticks(range(len(xd_list)))
                 ax.set_xticklabels([truncate(x) for x in xd_list], rotation=45, ha='right', fontsize=9)
+                # Move x-axis labels to bottom (important for plots with negative values like fnirs_rel)
+                ax.xaxis.set_ticks_position('bottom')
+                ax.tick_params(axis='x', which='both', bottom=True, labelbottom=True)
+                ax.spines['bottom'].set_position(('axes', 0))  # Keep spine at bottom
                 # Check if y_ticks or y_labels override is set (for fixed Y-axis limits)
                 yt = row.get('y_ticks')
                 yl = row.get('y_labels')
@@ -105,18 +118,18 @@ def plot(df, pdf_path):
                     # y_ticks is int: use as scale max
                     ax.set_yticks(list(range(1, yt + 1)))
                     if yl and isinstance(yl, (list, tuple)) and len(yl) == 2:
-                        # 2 labels: endpoints only
-                        labels = [''] * yt
-                        labels[0] = str(yl[0])
-                        labels[-1] = str(yl[1])
-                        ax.set_yticklabels(labels, fontsize=9)
+                        # 2 labels: endpoints only (renamed to avoid shadowing condition labels)
+                        ytick_labels = [''] * yt
+                        ytick_labels[0] = str(yl[0])
+                        ytick_labels[-1] = str(yl[1])
+                        ax.set_yticklabels(ytick_labels, fontsize=9)
                     elif yl and isinstance(yl, (list, tuple)) and len(yl) == 3:
                         # 3 labels: bottom, middle, top (requires odd y-max for true center)
-                        labels = [''] * yt
-                        labels[0] = str(yl[0])
-                        labels[(yt - 1) // 2] = str(yl[1])
-                        labels[-1] = str(yl[2])
-                        ax.set_yticklabels(labels, fontsize=9)
+                        ytick_labels = [''] * yt
+                        ytick_labels[0] = str(yl[0])
+                        ytick_labels[(yt - 1) // 2] = str(yl[1])
+                        ytick_labels[-1] = str(yl[2])
+                        ax.set_yticklabels(ytick_labels, fontsize=9)
                     # else: numeric ticks (SAM case)
                 elif yl and isinstance(yl, (list, tuple)) and len(yl) > 2:
                     # Full labels list (PANAS, BISBAS): use length as scale, all labeled
@@ -138,7 +151,7 @@ def plot(df, pdf_path):
         
         (([ax.plot(to_lst(xd), to_lst(yd), linewidth=2.5, label=lbl(i), alpha=0.85, color=colors[i % len(colors)]) for i, (xd, yd) in enumerate(zip(x_data, y_data))], ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='gray')) if plot_type == 'line' else
          ([ax.scatter(to_lst(xd), to_lst(yd), s=50, label=lbl(i), alpha=0.7, color=colors[i % len(colors)]) for i, (xd, yd) in enumerate(zip(x_data, y_data))], ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='gray')) if plot_type == 'scatter' else
-         (lambda n_cond, cats, w: ([ax.bar([i + (j - len(cats)/2 + 0.5) * w for i in range(n_cond)], [to_lst(y_data[i])[j] for i in range(n_cond)], width=w, label=cats[j], yerr=safe_yerr([to_lst(y_var[i])[j] if i < len(y_var) and j < len(to_lst(y_var[i])) else 0 for i in range(n_cond)]) if y_var else None, color=colors[j % len(colors)], alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}) for j in range(len(cats))], ax.set_xticks(range(n_cond)), ax.set_xticklabels(labels, fontsize=11), ax.legend(loc='upper right', fontsize=10, framealpha=0.95, edgecolor='gray')))(len(labels), to_lst(x_data[0]), 0.75 / len(to_lst(x_data[0])) if len(to_lst(x_data[0])) > 0 else 0.75) if plot_type == 'bar' else None) if is_concat else (
+         (lambda n_cond, cats, w: ([ax.bar([i + (j - len(cats)/2 + 0.5) * w for i in range(n_cond)], [to_lst(y_data[i])[j] for i in range(n_cond)], width=w, label=cats[j], yerr=safe_yerr([to_lst(y_var[i])[j] if i < len(y_var) and j < len(to_lst(y_var[i])) else 0 for i in range(n_cond)]) if y_var else None, color=colors[j % len(colors)], alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}) for j in range(len(cats))], ax.set_xticks(range(n_cond)), ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=11), ax.legend(loc='upper right', fontsize=10, framealpha=0.95, edgecolor='gray')))(len(labels), to_lst(x_data[0]), 0.75 / len(to_lst(x_data[0])) if len(to_lst(x_data[0])) > 0 else 0.75) if plot_type == 'bar' else None) if is_concat else (
          ax.plot(x_data, y_data, linewidth=2.5, alpha=0.85, color='dimgray') if plot_type == 'line' else
          ax.scatter(x_data, y_data, s=50, alpha=0.7, color='dimgray') if plot_type == 'scatter' else
          (ax.bar(range(len(y_data)), y_data, yerr=safe_yerr(y_var) if y_var else None, color='dimgray', alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}), ax.set_xticks(range(len(x_data))), ax.set_xticklabels([truncate(x) for x in x_data], rotation=45, ha='right', fontsize=10)))
