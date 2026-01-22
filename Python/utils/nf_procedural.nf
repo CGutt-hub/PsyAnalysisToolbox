@@ -191,14 +191,16 @@ def watchdog_finalize(String participant_id, String output_folder, String launch
     def timestamp = new Date().format('yyyy-MM-dd HH:mm:ss')
     def log_file = new File(output_folder, "${participant_id}_pipeline.log")
     
-    // Append completion to log
+    // Append completion to log BEFORE git sync (so all changes are captured)
     log_file.append("\n=== Pipeline completed: ${timestamp} for ${participant_id} ===\n")
     log_file.append("=== Branches: ${completed.size()}/${total_terminals} succeeded ===\n")
     if (!failed.isEmpty()) {
         log_file.append("=== Failed processes: ${failed.sort().join(', ')} ===\n")
     }
+    log_file.append("${timestamp} [watchdog] Done\n")
     
     // Git sync with lock to prevent race conditions between participants
+    // This happens AFTER log is finalized so all changes are committed
     def results_dir = new File(output_folder).parentFile.absolutePath
     
     git_lock.lock()
@@ -211,17 +213,13 @@ def watchdog_finalize(String participant_id, String output_folder, String launch
             def msg = "Results: ${participant_id} (${completed.size()}/${total_terminals})"
             ["git", "-C", results_dir, "commit", "-m", msg].execute().waitFor()
             ["git", "-C", results_dir, "push"].execute().waitFor()
-            log_file.append("${timestamp} [git] Synced: ${msg}\n")
-        } else {
-            log_file.append("${timestamp} [git] No changes\n")
         }
     } catch (Exception e) {
-        log_file.append("${timestamp} [git] Error: ${e.message}\n")
+        // Log git errors to stderr, not to the log file (would cause another uncommitted change)
+        System.err.println("[watchdog] Git error for ${participant_id}: ${e.message}")
     } finally {
         git_lock.unlock()
     }
-    
-    log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Done\n")
 }
 
 // Generic IOInterface: exe script input params

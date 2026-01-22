@@ -20,7 +20,8 @@ def build_preset_matrix(preset: str, **kwargs) -> NDArray[np.float64]:
         coeffs = PRESETS['mbll']['coeffs']
         wavelengths = kwargs.get('wavelengths', (760, 850))
         E = np.array([[coeffs[w][0], coeffs[w][1]] for w in wavelengths])
-        return np.linalg.pinv(E) / ppf
+        # Multiply by 1000 to convert from mM to μM (standard fNIRS unit)
+        return np.linalg.pinv(E) / ppf * 1000
     raise ValueError(f"Unknown preset: {preset}")
 
 def select_channels(ch_names: list[str], selector: str) -> list[int]:
