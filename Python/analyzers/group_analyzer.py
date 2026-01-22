@@ -1,4 +1,5 @@
 import polars as pl, numpy as np, sys, os, json, fnmatch, re
+from collections import defaultdict
 
 def _match_channels(patterns: list[str], available: list[str]) -> list[str]:
     """
@@ -25,6 +26,45 @@ def _match_channels(patterns: list[str], available: list[str]) -> list[str]:
                 matched.extend(prefix_matches)
     return matched
 
+def _auto_detect_groups(ch_cols: list[str]) -> dict[str, list[str]]:
+    """
+    Auto-detect channel groups from channel names.
+    Supports multiple naming conventions:
+    - NIRx style: '1-1:1-0', '1-2:2-0' -> groups by source number (first digit)
+    - MNE-NIRS style: 'S1_D1 hbo', 'S1_D2 hbr' -> groups by source number
+    - Generic numbered: 'ch1', 'ch2' -> single 'All' group
+    """
+    groups: dict[str, list[str]] = defaultdict(list)
+    
+    for ch in ch_cols:
+        # Try NIRx format: "source-detector:index-wavelength" e.g., "1-1:1-0"
+        nirx_match = re.match(r'^(\d+)-(\d+):', ch)
+        if nirx_match:
+            source = nirx_match.group(1)
+            groups[f'S{source}'].append(ch)
+            continue
+        
+        # Try MNE-NIRS format: "S1_D1 hbo" or "S1_D1"
+        mne_match = re.match(r'^S(\d+)_D(\d+)', ch)
+        if mne_match:
+            source = mne_match.group(1)
+            groups[f'S{source}'].append(ch)
+            continue
+        
+        # Try simple source-detector: "1-1", "2-3"
+        simple_match = re.match(r'^(\d+)-(\d+)$', ch)
+        if simple_match:
+            source = simple_match.group(1)
+            groups[f'S{source}'].append(ch)
+            continue
+    
+    # If we found groups, return them
+    if groups:
+        return dict(groups)
+    
+    # Fallback: put all channels in one group
+    return {'All': ch_cols}
+
 def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None, 
                    x_label: str = 'ROI', y_label: str = 'Mean', suffix: str = 'roi') -> str:
     """
@@ -48,8 +88,10 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
     """
     print(f"[group] ROI analysis: {ip}")
     
-    # Parse groups config
-    if os.path.isfile(groups_config):
+    # Parse groups config - "auto" triggers auto-detection
+    if groups_config.lower() == 'auto':
+        groups = {}  # Will trigger auto-detection below
+    elif os.path.isfile(groups_config):
         with open(groups_config) as f:
             groups = json.load(f)
     else:
@@ -72,8 +114,16 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
         else:
             print(f"[group] Warning: ROI '{name}' has no valid channels (patterns: {members}), skipping")
     
+    # Auto-detect groups if none matched
     if not valid_groups:
-        raise ValueError(f"No valid ROI groups found. Available channels: {ch_cols[:5]}{'...' if len(ch_cols) > 5 else ''}")
+        print(f"[group] No ROI groups matched. Auto-detecting from channel names...")
+        valid_groups = _auto_detect_groups(ch_cols)
+        if valid_groups:
+            print(f"[group] Auto-detected {len(valid_groups)} groups: {list(valid_groups.keys())}")
+            for name, chs in valid_groups.items():
+                print(f"[group]   '{name}': {len(chs)} channels")
+        else:
+            raise ValueError(f"No valid ROI groups found and auto-detection failed. Available channels: {ch_cols[:5]}{'...' if len(ch_cols) > 5 else ''}")
     
     group_names = list(valid_groups.keys())
     conditions = sorted(df['condition'].unique().to_list())

@@ -1,6 +1,6 @@
 import polars as pl, sys, os
 
-def relative_normalize(ip: str, baseline_cond: str = 'NEU') -> str:
+def relative_normalize(ip: str, baseline_cond: str = 'NEU', y_lim: float | None = None) -> str:
     """Convert concatenated analyzer output to relative change from baseline condition.
     
     Takes output from concatenating_processor which has structure:
@@ -14,6 +14,7 @@ def relative_normalize(ip: str, baseline_cond: str = 'NEU') -> str:
     Args:
         ip: Input parquet file from concatenating_processor
         baseline_cond: Condition to use as baseline (default: 'NEU')
+        y_lim: Optional Y-axis maximum limit for consistent scaling of relative plots
     
     Output: Parquet with same structure, y_data as relative change from baseline
     """
@@ -82,7 +83,10 @@ def relative_normalize(ip: str, baseline_cond: str = 'NEU') -> str:
     if 'y_label' in row:
         original_label = row['y_label']
         row['y_label'] = f'Δ {original_label} (rel. to {baseline_cond})'
-    
+    # Override y_ticks with relative y_lim if provided
+    if y_lim is not None:
+        row['y_ticks'] = y_lim
+
     out_df = pl.DataFrame([row])
     
     # Output
@@ -102,9 +106,10 @@ def relative_normalize(ip: str, baseline_cond: str = 'NEU') -> str:
 if __name__ == '__main__':
     (lambda a: relative_normalize(
         a[1], 
-        a[2] if len(a) > 2 and a[2] else 'NEU'
+        a[2] if len(a) > 2 and a[2] else 'NEU',
+        float(a[3]) if len(a) > 3 and a[3] and a[3].lower() != 'none' else None
     ) if len(a) >= 2 else (
         print('Convert values to relative change from baseline condition. Plot-ready output.'),
-        print('[relative] Usage: python relative_analyzer.py <concatenated.parquet> [baseline_cond]'), 
+        print('[relative] Usage: python relative_analyzer.py <concatenated.parquet> [baseline_cond] [y_lim]'), 
         sys.exit(1)
     ))(sys.argv)

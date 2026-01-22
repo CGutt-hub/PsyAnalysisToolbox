@@ -151,6 +151,11 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
                 it.status in ['FAILED', 'ABORTED'] 
             }.collect { it.process } as Set
             
+            // Count terminal processes that are done (completed OR failed)
+            def done_terminals = participant_tasks.findAll { 
+                it.process in terminals && it.status in ['COMPLETED', 'FAILED', 'ABORTED']
+            }.collect { it.process } as Set
+            
             // Track stability (task count not changing)
             def current_count = participant_tasks.size()
             if (current_count == last_task_count) {
@@ -160,17 +165,29 @@ def watchdog_monitor(String participant_id, String output_folder, String trace_f
                 last_task_count = current_count
             }
             
-            // Success: all terminal processes completed - finalize immediately
-            if (completed_terminals.size() == terminals.size()) {
-                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] All ${terminals.size()} terminals completed\n")
+            // All terminals done (completed or failed) - wait for log to settle, then finalize
+            if (done_terminals.size() == terminals.size()) {
+                if (failed_processes.isEmpty()) {
+                    log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] All ${terminals.size()} terminals completed successfully\n")
+                } else {
+                    log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] All terminals done: ${completed_terminals.size()} completed, ${failed_processes.size()} failed\n")
+                }
+                // Wait for pipeline log to finish writing before syncing
+                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Waiting for log to settle...\n")
+                Thread.sleep(10000)  // 10s delay to let Nextflow finish writing logs
                 watchdog_finalize(participant_id, output_folder, launch_dir, 
                                   completed_terminals, failed_processes, terminals.size())
                 break
             }
             
-            // Partial: failures present + stable (no new tasks) - finalize with partial results
-            if (!failed_processes.isEmpty() && stable_count >= stable_threshold) {
-                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Partial: ${completed_terminals.size()}/${terminals.size()} completed, ${failed_processes.size()} failed\n")
+            // Stability timeout: no new tasks for a long time + at least some terminals done
+            // This catches cases where upstream failures prevent downstream terminals from starting
+            def extended_stable_threshold = 20  // 60s with no changes
+            if (stable_count >= extended_stable_threshold && done_terminals.size() > 0) {
+                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Timeout: ${done_terminals.size()}/${terminals.size()} terminals done after ${extended_stable_threshold * 3}s stable\n")
+                // Wait for pipeline log to finish writing before syncing
+                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Waiting for log to settle...\n")
+                Thread.sleep(10000)  // 10s delay to let Nextflow finish writing logs
                 watchdog_finalize(participant_id, output_folder, launch_dir, 
                                   completed_terminals, failed_processes, terminals.size())
                 break
