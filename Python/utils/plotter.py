@@ -144,7 +144,9 @@ def plot(df, pdf_path):
         for i in range(n_plots, len(axes)):
             axes[i].set_visible(False)
         
+        # Use tight_layout with extra bottom padding for rotated x-axis labels
         plt.tight_layout()
+        plt.subplots_adjust(bottom=0.15)  # Extra space for diagonal tick labels
     else:
         # Original single-plot layout
         fig, ax = plt.subplots(figsize=(12, 6))
@@ -161,6 +163,7 @@ def plot(df, pdf_path):
         (lambda yt: (ax.set_yticks(list(range(1, len(yt) + 1))), ax.set_yticklabels(yt, fontsize=9), ax.set_ylim(0.5, len(yt) + 0.5)) if yt and isinstance(yt, (list, tuple)) else ax.tick_params(labelsize=11))(row.get('y_ticks'))
         ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.8); [ax.spines[s].set_visible(False) for s in ['top', 'right']]; [ax.spines[s].set_linewidth(1.2) for s in ['left', 'bottom']]
         plt.tight_layout()
+        plt.subplots_adjust(bottom=0.2)  # Extra space for diagonal tick labels
     
     pdf.savefig(fig, bbox_inches='tight', dpi=300); plt.close(fig); pdf.close()
     print(f"[plotter] Plotting finished: {pdf_path}")
