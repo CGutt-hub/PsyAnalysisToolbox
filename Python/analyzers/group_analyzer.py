@@ -66,7 +66,8 @@ def _auto_detect_groups(ch_cols: list[str]) -> dict[str, list[str]]:
     return {'All': ch_cols}
 
 def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None, 
-                   x_label: str = 'ROI', y_label: str = 'Mean', suffix: str = 'roi') -> str:
+                   x_label: str = 'ROI', y_label: str = 'Mean', suffix: str = 'roi',
+                   baseline_sec: float = 2.0) -> str:
     """
     Aggregate channels by groups (ROIs) and compute group-level statistics per condition.
     Generic group analyzer - works on epoched multichannel data.
@@ -82,6 +83,7 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
         x_label: Label for x-axis (e.g., 'ROI', 'Brain Region')
         y_label: Label for y-axis (e.g., 'HbO2 Change (μM)', 'Mean Activity')
         suffix: Output file suffix (default 'roi')
+        baseline_sec: Seconds at start of each epoch to use as baseline (default 2.0)
     
     Returns:
         Path to signal file
@@ -131,7 +133,17 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
     out_folder = os.path.join(os.getcwd(), f"{base}_{suffix}")
     os.makedirs(out_folder, exist_ok=True)
     
+    # Determine sampling frequency for baseline calculation
+    sfreq = float(df['sfreq'][0]) if 'sfreq' in df.columns else None
+    if sfreq is None and 'time' in df.columns:
+        times = df['time'].unique().sort().to_list()
+        if len(times) > 1:
+            sfreq = 1.0 / (times[1] - times[0])
+    baseline_samples = int(baseline_sec * sfreq) if sfreq else 0
+    
     print(f"[group] ROIs: {group_names}, Conditions: {conditions}")
+    if baseline_samples > 0:
+        print(f"[group] Per-epoch baseline correction: first {baseline_sec}s ({baseline_samples} samples)")
     
     for idx, cond in enumerate(conditions):
         cond_df = df.filter(pl.col('condition') == cond)
@@ -141,12 +153,23 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
         for roi_name in group_names:
             roi_chs = valid_groups[roi_name]
             
-            # Compute mean per epoch, then stats across epochs
+            # Compute mean per epoch (with per-epoch baseline correction), then stats across epochs
             epoch_means = []
             for eid in epochs:
                 epoch_df = cond_df.filter(pl.col('epoch_id') == eid)
                 roi_data = epoch_df.select(roi_chs).to_numpy()
-                epoch_means.append(float(np.mean(roi_data)))
+                
+                # Per-epoch baseline correction: subtract mean of first N samples
+                if baseline_samples > 0 and roi_data.shape[0] > baseline_samples:
+                    baseline_mean = roi_data[:baseline_samples, :].mean(axis=0, keepdims=True)
+                    roi_data = roi_data - baseline_mean
+                
+                # Compute mean of post-baseline period (exclude baseline samples from mean)
+                if baseline_samples > 0 and roi_data.shape[0] > baseline_samples:
+                    post_baseline_data = roi_data[baseline_samples:, :]
+                    epoch_means.append(float(np.mean(post_baseline_data)))
+                else:
+                    epoch_means.append(float(np.mean(roi_data)))
             
             roi_means.append(float(np.mean(epoch_means)))
             roi_sems.append(float(np.std(epoch_means, ddof=1) / np.sqrt(len(epoch_means))) if len(epoch_means) > 1 else 0.0)
@@ -179,9 +202,11 @@ if __name__ == '__main__':
                                float(a[3]) if len(a) > 3 and a[3] and a[3] != 'None' else None,
                                a[4] if len(a) > 4 else 'ROI',
                                a[5] if len(a) > 5 else 'Mean',
-                               a[6] if len(a) > 6 else 'roi') if len(a) >= 3 else (
-        print('Aggregate channels by ROIs per condition. Plot-ready output.'),
-        print('[group] Usage: python group_analyzer.py <epoched.parquet> <groups_json> [y_lim] [x_label] [y_label] [suffix]'),
+                               a[6] if len(a) > 6 else 'roi',
+                               float(a[7]) if len(a) > 7 and a[7] and a[7] != 'None' else 2.0) if len(a) >= 3 else (
+        print('Aggregate channels by ROIs per condition. Plot-ready output with per-epoch baseline correction.'),
+        print('[group] Usage: python group_analyzer.py <epoched.parquet> <groups_json> [y_lim] [x_label] [y_label] [suffix] [baseline_sec]'),
         print('[group] Channel patterns: exact match, glob (*, ?, []), or regex (re:pattern)'),
-        print('[group] Example: python group_analyzer.py data.parquet \'{"DLPFC_L": ["1-*", "2-*"], "VMPFC": ["re:^[5-8]-"]}\' 0.5 "ROI" "HbO2 (μM)" fnirs'),
+        print('[group] baseline_sec: seconds at start of each epoch for baseline (default 2.0)'),
+        print('[group] Example: python group_analyzer.py data.parquet \'{"DLPFC_L": ["1-*", "2-*"], "VMPFC": ["re:^[5-8]-"]}\' 0.5 "ROI" "HbO2 (μM)" fnirs 2.0'),
         sys.exit(1)))(sys.argv)

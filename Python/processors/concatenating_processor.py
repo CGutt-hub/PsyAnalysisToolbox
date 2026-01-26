@@ -10,7 +10,8 @@ def concat_generic(files: list[str], conds: list[str]) -> pl.DataFrame:
     """
     Generic concatenation: Collects all incoming datasets with the same structure.
     
-    List fields (x_data, y_data, y_var, counts_per_x, etc.) are collected into lists of lists.
+    List fields (y_data, y_var, counts_per_x, etc.) are collected into lists of lists.
+    For 'grid' or 'bar' plot types, x_data is treated as shared categories (metadata).
     Metadata fields (plot_type, x_axis, y_label, x_label, y_ticks, etc.) are taken from first dataset.
     Adds 'labels' field containing the list of dataset labels.
     Labels are extracted from 'condition' field in each file if available, otherwise use provided conds.
@@ -26,6 +27,13 @@ def concat_generic(files: list[str], conds: list[str]) -> pl.DataFrame:
     list_fields = [k for k, v in first_row.items() if isinstance(v, (list, tuple))]
     # These list fields are actually metadata (same across all files), not data to aggregate
     metadata_list_fields = ['y_labels']  # Endpoint labels like ['gar nicht', 'extrem']
+    
+    # For grid/bar plots, x_data represents shared categories (ROI names, question names, etc.)
+    # and should NOT be nested - it stays as a flat list
+    plot_type = first_row.get('plot_type', '')
+    if plot_type in ('grid', 'bar'):
+        metadata_list_fields.append('x_data')
+    
     list_fields = [k for k in list_fields if k not in metadata_list_fields]
     # Exclude 'condition' from metadata since it varies per file
     metadata_fields = {k: v for k, v in first_row.items() if not isinstance(v, (list, tuple)) and k != 'condition'}
@@ -34,7 +42,7 @@ def concat_generic(files: list[str], conds: list[str]) -> pl.DataFrame:
         if k in first_row:
             metadata_fields[k] = first_row[k]
     
-    print(f"[concatenating] List fields: {list_fields}")
+    print(f"[concatenating] List fields (to aggregate): {list_fields}")
     print(f"[concatenating] Metadata fields: {list(metadata_fields.keys())}")
     
     aggregated = {field: [row[field] for row in all_dfs] for field in list_fields}

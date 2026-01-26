@@ -1,24 +1,126 @@
 // Generic Nextflow procedural infrastructure for Python-based pipelines
-// Handles output directory creation, log management, and IOInterface process
-// Includes branch watchdog for automatic finalization when all branches complete
+// Handles output directory creation, log management, and trace-based watchdog finalization
+// Watchdog monitors Nextflow trace file to detect when all terminal processes complete
 
 import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.ConcurrentHashMap
 
 // Global lock for git operations - prevents race conditions when multiple participants finish simultaneously
 @groovy.transform.Field
 def git_lock = new ReentrantLock()
 
-// Workflow wrapper: discovers participants, creates output folders, and starts watchdog
-// Supports continuous mode via watchPath for new participants
-// Watchdog monitors trace file and triggers finalization + git sync when all branches terminate
+// Track finalized participants to avoid duplicate finalization
+@groovy.transform.Field
+def finalized_participants = ConcurrentHashMap.newKeySet()
+
+// Workflow wrapper: discovers participants and creates output folders
+// Starts a trace-watching thread that finalizes participants when all their terminals complete
 workflow workflow_wrapper {
     take:
         input_dir
         output_dir
         participant_pattern
-        terminal_processes    // Comma-separated list of terminal process names (branch endpoints)
+        terminal_processes    // Comma-separated list of terminal process names (e.g., "panas_plotter,bisbas_plotter,...")
     
     main:
+        // Parse terminal process names
+        def terminal_list = terminal_processes.split(',').collect { it.trim() }
+        def num_terminals = terminal_list.size()
+        
+        // Start trace-watching thread for finalization
+        def trace_file = new File("${workflow.launchDir}/pipeline_trace.txt")
+        def results_path = "${workflow.launchDir}/${output_dir}"
+        
+        Thread.start {
+            // Track ALL processes per participant: [pid: [process: status]]
+            def participant_processes = new ConcurrentHashMap<String, ConcurrentHashMap<String, String>>()
+            def last_activity = new ConcurrentHashMap<String, Long>()  // Last trace activity per participant
+            def last_line_count = 0
+            def INACTIVITY_MS = 15000  // 15 seconds of no new trace entries after all done
+            
+            // Terminal statuses (process is done, allows finalization)
+            def TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'ABORTED'] as Set
+            // Blocking statuses (process not done, prevents finalization)
+            def BLOCKING_STATUSES = ['SUBMITTED', 'RUNNING', 'PENDING', 'CACHED'] as Set
+            
+            while (true) {
+                try {
+                    Thread.sleep(5000)  // Check every 5 seconds
+                    
+                    if (!trace_file.exists()) continue
+                    
+                    def lines = trace_file.readLines()
+                    def now = System.currentTimeMillis()
+                    
+                    // Check for participants that are done (no running processes + inactivity)
+                    last_activity.each { pid, lastTime ->
+                        if (finalized_participants.contains(pid)) return  // Already finalized
+                        
+                        def procs = participant_processes.getOrDefault(pid, [:])
+                        def blocking = procs.findAll { it.value in BLOCKING_STATUSES }
+                        def completed = procs.findAll { it.value == 'COMPLETED' }
+                        def failed = procs.findAll { it.value == 'FAILED' }
+                        def aborted = procs.findAll { it.value == 'ABORTED' }
+                        
+                        // Only finalize if: has processes AND none blocking AND inactive
+                        if (procs.size() > 0 && blocking.size() == 0 && (now - lastTime > INACTIVITY_MS)) {
+                            if (finalized_participants.add(pid)) {
+                                def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
+                                if (pid_log.exists()) {
+                                    pid_log.append("[${new Date().format('yyyy-MM-dd HH:mm:ss')}] Pipeline complete: ${completed.size()} succeeded, ${failed.size()} failed, ${aborted.size()} skipped\n")
+                                }
+                                finalize_participant(pid, results_path, procs, procs.size(), git_lock)
+                            }
+                        }
+                    }
+                    
+                    if (lines.size() <= last_line_count) continue
+                    
+                    // Parse header to find column indices
+                    def header = lines[0].split('\t')
+                    def nameIdx = header.findIndexOf { it == 'name' }
+                    def statusIdx = header.findIndexOf { it == 'status' }
+                    def processIdx = header.findIndexOf { it == 'process' }
+                    
+                    if (nameIdx < 0 || statusIdx < 0 || processIdx < 0) continue
+                    
+                    // Process new lines only
+                    for (int i = last_line_count ?: 1; i < lines.size(); i++) {
+                        def cols = lines[i].split('\t')
+                        if (cols.size() <= Math.max(nameIdx, Math.max(statusIdx, processIdx))) continue
+                        
+                        def taskName = cols[nameIdx]
+                        def status = cols[statusIdx]
+                        def processName = cols[processIdx]
+                        
+                        // Extract participant ID from task name (e.g., "panas_plotter (EV_003_panas.parquet)")
+                        def pidMatch = taskName =~ /\(([A-Za-z]+_[0-9]+)/
+                        if (!pidMatch) continue
+                        def pid = pidMatch[0][1]
+                        
+                        // Track ALL statuses for any process
+                        participant_processes.computeIfAbsent(pid, { new ConcurrentHashMap<String, String>() })
+                        participant_processes[pid][processName] = status
+                        last_activity[pid] = now  // Reset inactivity timer on any trace entry
+                        
+                        // Write to participant's log file (only for terminal COMPLETED/FAILED)
+                        if (processName in terminal_list && status in ['COMPLETED', 'FAILED']) {
+                            def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
+                            if (pid_log.exists()) {
+                                def branch = processName.replace('_plotter', '').replace('_rel', '_rel')
+                                pid_log.append("[${new Date().format('yyyy-MM-dd HH:mm:ss')}] ${branch} -> ${status}\n")
+                            }
+                        }
+                    }
+                    
+                    last_line_count = lines.size()
+                    
+                } catch (Exception e) {
+                    // Ignore errors (file might be locked by Nextflow)
+                }
+            }
+        }
+        
         // Convert glob pattern to regex
         def regex_pattern = participant_pattern.replaceAll(/\*/, '.*').replaceAll(/\?/, '.')
         def input_path = new File("${workflow.launchDir}/${input_dir}")
@@ -43,7 +145,7 @@ workflow workflow_wrapper {
                 !out_folder.exists() // Only process if output folder doesn't exist yet
             }
         
-        // Create folders, start watchdog, and emit tuple [participant_id, output_folder]
+        // Create folders and emit tuple [participant_id, output_folder]
         participant_context = all_participants.map { pid ->
             def safe_id = pid.replaceAll('\r', '').trim().replaceAll('[^A-Za-z0-9._-]', '_')
             def folder_path = new File("${workflow.launchDir}/${output_dir}/${safe_id}")
@@ -53,16 +155,6 @@ workflow workflow_wrapper {
             def log_file = new File(folder_path, "${safe_id}_pipeline.log")
             log_file.text = "=== Pipeline started: ${new Date().format('yyyy-MM-dd HH:mm:ss')} for ${safe_id} ===\n"
             
-            // Start watchdog as background process
-            // Explicitly convert to String to avoid GString/Path type mismatches
-            def trace_file = "${workflow.launchDir}/pipeline_trace.txt".toString()
-            def launch_dir = workflow.launchDir.toString()
-            def terminals = terminal_processes.toString()
-            
-            Thread.start {
-                watchdog_monitor(safe_id, folder_path.absolutePath, trace_file, launch_dir, terminals)
-            }
-            
             def folder = "${output_dir}/${safe_id}"
             [pid, folder] // Return tuple [participant_id, output_folder]
         }
@@ -71,171 +163,41 @@ workflow workflow_wrapper {
         participant_context  // Emits [participant_id, output_folder] tuples
 }
 
-// Watchdog: monitors trace file for participant completion, then finalizes
-def watchdog_monitor(String participant_id, String output_folder, String trace_file, 
-                     String launch_dir, String terminal_processes) {
-    def terminals = terminal_processes.split(',').collect { it.trim() } as Set
-    def poll_interval = 3000  // 3 seconds
-    def stable_threshold = 2  // 2 polls (6s) with no change before declaring done with failures
-    def stable_count = 0
-    def last_task_count = 0
-    def log_file = new File(output_folder, "${participant_id}_pipeline.log")
+// Finalize a single participant - called by watchdog when all terminals complete
+def finalize_participant(String pid, String results_path, Map branch_status, int total_terminals, ReentrantLock lock) {
+    def timestamp = new java.text.SimpleDateFormat('yyyy-MM-dd HH:mm:ss').format(new Date())
+    def log_file = new File("${results_path}/${pid}/${pid}_pipeline.log")
     
-    log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Started for ${participant_id}, monitoring ${terminals.size()} terminal processes\n")
+    def completed = branch_status.findAll { it.value == 'COMPLETED' }.keySet().toList()
+    def failed = branch_status.findAll { it.value == 'FAILED' }.keySet().toList()
+    def status = failed.isEmpty() ? 'SUCCESS' : 'PARTIAL'
     
-    while (true) {
-        try {
-            def trace = new File(trace_file)
-            if (!trace.exists()) {
-                Thread.sleep(poll_interval)
-                continue
-            }
-            
-            // Parse trace file - multi-line records with tab-separated headers
-            def content = trace.text
-            def lines = content.split('\n')
-            if (lines.size() < 2) {
-                Thread.sleep(poll_interval)
-                continue
-            }
-            
-            def header = lines[0].split('\t')
-            def statusIdx = header.findIndexOf { it == 'status' }
-            def processIdx = header.findIndexOf { it == 'process' }
-            
-            if (statusIdx < 0 || processIdx < 0) {
-                Thread.sleep(poll_interval)
-                continue
-            }
-            
-            // Parse records - lines starting with digit+tab are record headers
-            def participant_tasks = []
-            def i = 1
-            while (i < lines.size()) {
-                def line = lines[i]
-                if (line =~ /^\d+\t/) {
-                    def cols = line.split('\t')
-                    // Collect full record content
-                    def recordContent = new StringBuilder(line)
-                    def j = i + 1
-                    while (j < lines.size() && !(lines[j] =~ /^\d+\t/)) {
-                        recordContent.append('\n').append(lines[j])
-                        j++
-                    }
-                    
-                    // Check if record belongs to this participant
-                    if (recordContent.toString().contains(participant_id)) {
-                        def process = cols.size() > processIdx ? cols[processIdx].split(':')[-1].trim() : ''
-                        def status = cols.size() > statusIdx ? cols[statusIdx].trim() : ''
-                        if (process && status) {
-                            participant_tasks << [process: process, status: status]
-                        }
-                    }
-                    i = j
-                } else {
-                    i++
-                }
-            }
-            
-            if (participant_tasks.isEmpty()) {
-                Thread.sleep(poll_interval)
-                continue
-            }
-            
-            // Count completed terminals and failed processes
-            def completed_terminals = participant_tasks.findAll { 
-                it.status == 'COMPLETED' && it.process in terminals 
-            }.collect { it.process } as Set
-            
-            def failed_processes = participant_tasks.findAll { 
-                it.status in ['FAILED', 'ABORTED'] 
-            }.collect { it.process } as Set
-            
-            // Count terminal processes that are done (completed OR failed)
-            def done_terminals = participant_tasks.findAll { 
-                it.process in terminals && it.status in ['COMPLETED', 'FAILED', 'ABORTED']
-            }.collect { it.process } as Set
-            
-            // Track stability (task count not changing)
-            def current_count = participant_tasks.size()
-            if (current_count == last_task_count) {
-                stable_count++
-            } else {
-                stable_count = 0
-                last_task_count = current_count
-            }
-            
-            // All terminals done (completed or failed) - wait for log to settle, then finalize
-            if (done_terminals.size() == terminals.size()) {
-                if (failed_processes.isEmpty()) {
-                    log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] All ${terminals.size()} terminals completed successfully\n")
-                } else {
-                    log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] All terminals done: ${completed_terminals.size()} completed, ${failed_processes.size()} failed\n")
-                }
-                // Wait for pipeline log to finish writing before syncing
-                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Waiting for log to settle...\n")
-                Thread.sleep(10000)  // 10s delay to let Nextflow finish writing logs
-                watchdog_finalize(participant_id, output_folder, launch_dir, 
-                                  completed_terminals, failed_processes, terminals.size())
-                break
-            }
-            
-            // Stability timeout: no new tasks for a long time + at least some terminals done
-            // This catches cases where upstream failures prevent downstream terminals from starting
-            def extended_stable_threshold = 20  // 60s with no changes
-            if (stable_count >= extended_stable_threshold && done_terminals.size() > 0) {
-                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Timeout: ${done_terminals.size()}/${terminals.size()} terminals done after ${extended_stable_threshold * 3}s stable\n")
-                // Wait for pipeline log to finish writing before syncing
-                log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Waiting for log to settle...\n")
-                Thread.sleep(10000)  // 10s delay to let Nextflow finish writing logs
-                watchdog_finalize(participant_id, output_folder, launch_dir, 
-                                  completed_terminals, failed_processes, terminals.size())
-                break
-            }
-            
-            Thread.sleep(poll_interval)
-            
-        } catch (Exception e) {
-            log_file.append("${new Date().format('yyyy-MM-dd HH:mm:ss')} [watchdog] Error: ${e.message}\n")
-            Thread.sleep(poll_interval)
-        }
+    // Write completion summary to participant's log
+    log_file.append("\n=== Pipeline ${status}: ${timestamp} ===\n")
+    log_file.append("=== Branches completed: ${completed.size()}/${total_terminals} ===\n")
+    log_file.append("=== Completed: ${completed.sort().join(', ')} ===\n")
+    if (failed) {
+        log_file.append("=== FAILED: ${failed.sort().join(', ')} ===\n")
     }
-}
-
-// Finalize: write completion log and git sync
-def watchdog_finalize(String participant_id, String output_folder, String launch_dir,
-                      Set completed, Set failed, int total_terminals) {
-    def timestamp = new Date().format('yyyy-MM-dd HH:mm:ss')
-    def log_file = new File(output_folder, "${participant_id}_pipeline.log")
     
-    // Append completion to log BEFORE git sync (so all changes are captured)
-    log_file.append("\n=== Pipeline completed: ${timestamp} for ${participant_id} ===\n")
-    log_file.append("=== Branches: ${completed.size()}/${total_terminals} succeeded ===\n")
-    if (!failed.isEmpty()) {
-        log_file.append("=== Failed processes: ${failed.sort().join(', ')} ===\n")
-    }
-    log_file.append("${timestamp} [watchdog] Done\n")
-    
-    // Git sync with lock to prevent race conditions between participants
-    // This happens AFTER log is finalized so all changes are committed
-    def results_dir = new File(output_folder).parentFile.absolutePath
-    
-    git_lock.lock()
+    // Git sync with lock
+    lock.lock()
     try {
-        def git_status = ["git", "-C", results_dir, "status", "--porcelain"].execute()
+        def git_status = ["git", "-C", results_path, "status", "--porcelain"].execute()
         git_status.waitFor()
         
         if (git_status.text.trim()) {
-            ["git", "-C", results_dir, "add", "."].execute().waitFor()
-            def msg = "Results: ${participant_id} (${completed.size()}/${total_terminals})"
-            ["git", "-C", results_dir, "commit", "-m", msg].execute().waitFor()
-            ["git", "-C", results_dir, "push"].execute().waitFor()
+            ["git", "-C", results_path, "add", "."].execute().waitFor()
+            def msg = "${status}: ${pid} (${completed.size()}/${total_terminals})"
+            if (failed) msg += " - failed: ${failed.join(',')}"
+            ["git", "-C", results_path, "commit", "-m", msg].execute().waitFor()
+            ["git", "-C", results_path, "push"].execute().waitFor()
+            log_file.append("[${timestamp}] Git sync complete\n")
         }
     } catch (Exception e) {
-        // Log git errors to stderr, not to the log file (would cause another uncommitted change)
-        System.err.println("[watchdog] Git error for ${participant_id}: ${e.message}")
+        log_file.append("[${timestamp}] Git error: ${e.message}\n")
     } finally {
-        git_lock.unlock()
+        lock.unlock()
     }
 }
 

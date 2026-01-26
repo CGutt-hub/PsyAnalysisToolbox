@@ -23,15 +23,20 @@ def plot(df, pdf_path):
             plot_type = plot_type[0] if plot_type else 'bar'
     else:
         plot_type = raw_plot_type
-    is_concat = x_data and isinstance(x_data[0], (list, tuple))
+    # For grid/bar plots, x_data may be flat (shared categories) while y_data is nested
+    # For line plots, both x_data and y_data are nested
+    is_concat_y = y_data and isinstance(y_data[0], (list, tuple))
+    is_concat_x = x_data and isinstance(x_data[0], (list, tuple))
+    is_concat = is_concat_y or is_concat_x
     colors = ['dimgray', 'darkgray', 'gray', 'lightgray', 'silver']
     lbl = lambda i: labels[i] if i < len(labels) else f'Dataset {i+1}'
     
-    print(f"[plotter] Plot type: {plot_type}, Concatenated: {is_concat}, Labels: {labels if labels else 'none'}")
+    print(f"[plotter] Plot type: {plot_type}, Concatenated: {is_concat} (x={is_concat_x}, y={is_concat_y}), Labels: {labels if labels else 'none'}")
     
     # Grid layout for line_grid or grid: separate subplot per condition
     if (plot_type == 'line_grid' or plot_type == 'grid') and is_concat:
-        n_plots = len(x_data)
+        # For grid/bar plots with flat x_data, n_plots is determined by y_data
+        n_plots = len(y_data) if is_concat_y else len(x_data)
         n_cols = min(3, n_plots)
         n_rows = (n_plots + n_cols - 1) // n_cols
         print(f"[plotter] Creating grid: {n_rows}x{n_cols} for {n_plots} conditions")
@@ -41,10 +46,18 @@ def plot(df, pdf_path):
         
         # Calculate global axis limits for consistent scaling across all subplots
         all_x_data, all_y_data = [], []
-        for xd, yd in zip(x_data, y_data):
-            xd_list, yd_list = to_lst(xd), to_lst(yd)
-            all_x_data.extend(xd_list)
-            all_y_data.extend(yd_list)
+        
+        # Handle flat x_data (grid/bar with shared categories) vs nested x_data (line_grid)
+        if is_concat_x:
+            for xd, yd in zip(x_data, y_data):
+                xd_list, yd_list = to_lst(xd), to_lst(yd)
+                all_x_data.extend(xd_list)
+                all_y_data.extend(yd_list)
+        else:
+            # x_data is flat (shared categories), y_data is nested
+            all_x_data = to_lst(x_data)
+            for yd in y_data:
+                all_y_data.extend(to_lst(yd))
         
         # Calculate global limits for both x and y axes
         y_min, y_max = min(all_y_data), max(all_y_data)
@@ -62,8 +75,13 @@ def plot(df, pdf_path):
             # For bar plots, x-axis is categorical (no global x limit needed)
             global_x_lim = None
         
-        for i, (xd, yd, yv) in enumerate(zip(x_data, y_data, y_var if y_var else [None]*len(x_data))):
+        # Iterate over conditions - handle flat x_data (shared) vs nested x_data
+        for i in range(n_plots):
             ax = axes[i]
+            # For grid/bar with flat x_data, use shared x_data for all subplots
+            xd = x_data[i] if is_concat_x else x_data
+            yd = y_data[i]
+            yv = y_var[i] if y_var and i < len(y_var) else None
             xd_list, yd_list = to_lst(xd), to_lst(yd)
             
             # For 'grid' type (bar plots), create bar chart
@@ -79,10 +97,16 @@ def plot(df, pdf_path):
                 # Check if y_ticks or y_labels override is set (for fixed Y-axis limits)
                 yt = row.get('y_ticks')
                 yl = row.get('y_labels')
-                if yt and isinstance(yt, (int, float)):
-                    ax.set_ylim(0.5, yt + 0.5)
-                elif yl and isinstance(yl, (list, tuple)) and len(yl) > 2:
+                if yl and isinstance(yl, (list, tuple)) and len(yl) > 2:
+                    # Questionnaire scale with endpoint labels: y-axis is 1 to N
                     ax.set_ylim(0.5, len(yl) + 0.5)
+                elif yt and isinstance(yt, (int, float)):
+                    if yl and isinstance(yl, (list, tuple)) and len(yl) == 2:
+                        # Questionnaire scale with 2 endpoint labels: treat yt as max
+                        ax.set_ylim(0.5, yt + 0.5)
+                    else:
+                        # Numeric data (fNIRS, etc.): treat yt as symmetric limit around zero
+                        ax.set_ylim(-abs(yt), abs(yt))
                 else:
                     ax.set_ylim(global_y_lim)
             else:
@@ -144,9 +168,12 @@ def plot(df, pdf_path):
         for i in range(n_plots, len(axes)):
             axes[i].set_visible(False)
         
-        # Use tight_layout with extra bottom padding for rotated x-axis labels
-        plt.tight_layout()
-        plt.subplots_adjust(bottom=0.15)  # Extra space for diagonal tick labels
+        # Rotate x-axis labels diagonally for all subplots (same as singular plots)
+        for ax in axes[:n_plots]:
+            plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+        
+        # Use tight_layout with rect to leave space for rotated labels
+        fig.tight_layout(rect=[0, 0.05, 1, 1])  # [left, bottom, right, top]
     else:
         # Original single-plot layout
         fig, ax = plt.subplots(figsize=(12, 6))
@@ -162,8 +189,8 @@ def plot(df, pdf_path):
         ax.set_ylabel(row.get('y_axis') or row.get('y_label', ''), fontsize=13, fontweight='medium')
         (lambda yt: (ax.set_yticks(list(range(1, len(yt) + 1))), ax.set_yticklabels(yt, fontsize=9), ax.set_ylim(0.5, len(yt) + 0.5)) if yt and isinstance(yt, (list, tuple)) else ax.tick_params(labelsize=11))(row.get('y_ticks'))
         ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.8); [ax.spines[s].set_visible(False) for s in ['top', 'right']]; [ax.spines[s].set_linewidth(1.2) for s in ['left', 'bottom']]
-        plt.tight_layout()
-        plt.subplots_adjust(bottom=0.2)  # Extra space for diagonal tick labels
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right')  # Ensure diagonal labels
+        fig.tight_layout(rect=[0, 0.05, 1, 1])  # Leave space for rotated labels
     
     pdf.savefig(fig, bbox_inches='tight', dpi=300); plt.close(fig); pdf.close()
     print(f"[plotter] Plotting finished: {pdf_path}")

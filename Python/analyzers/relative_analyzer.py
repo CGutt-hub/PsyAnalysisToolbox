@@ -59,7 +59,6 @@ def relative_normalize(ip: str, baseline_cond: str = 'NEU', y_lim: float | None 
     
     new_y_data = []
     new_y_var = []
-    new_x_data = []
     new_labels = []
     for i, (label, values, errors) in enumerate(zip(labels, y_data, y_var)):
         # Skip the baseline condition (it would be all zeros)
@@ -68,17 +67,13 @@ def relative_normalize(ip: str, baseline_cond: str = 'NEU', y_lim: float | None 
         rel_vals, rel_errs = to_relative(values, errors, baseline_values)
         new_y_data.append(rel_vals)
         new_y_var.append(rel_errs)
-        # Keep x_data aligned (same x values for all conditions typically)
-        if i < len(x_data):
-            new_x_data.append(x_data[i])
         new_labels.append(label)
     
     # Update row with relative values (excluding baseline)
+    # Note: x_data stays unchanged - it's shared across conditions (e.g., ROI names)
     row['labels'] = new_labels
     row['y_data'] = new_y_data
     row['y_var'] = new_y_var
-    if new_x_data:
-        row['x_data'] = new_x_data
     # Update y_label to indicate relative change
     if 'y_label' in row:
         original_label = row['y_label']
