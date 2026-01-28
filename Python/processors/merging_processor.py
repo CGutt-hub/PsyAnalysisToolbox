@@ -115,14 +115,40 @@ def merge_plot_data(ip: list[str], prefixes: list[str] | None = None, output_suf
             'y_label': [y_label], 'y_ticks': [y_ticks]
         }).write_parquet(os.path.join(out_folder, f"{pid}{output_suffix}{idx+1}.parquet"))
     
-    # Create signal file
-    signal_path = os.path.join(os.getcwd(), f"{pid}{output_suffix}.parquet")
+    # Also create a concatenated output file (compatible with plotter/relative_analyzer)
+    concat_path = os.path.join(os.getcwd(), f"{pid}{output_suffix}_concat.parquet")
+    all_x, all_y, all_var = [], [], []
+    for cond in common_conds:
+        combined_x, combined_y, combined_var = [], [], []
+        for data, prefix in zip(all_data, prefixes):
+            rows = [d for d in data if d['condition'] == cond]
+            if rows:
+                row = rows[0]
+                x_data = row.get('x_data', [])
+                y_data = row.get('y_data', [])
+                y_var = row.get('y_var', [0.0] * len(y_data))
+                combined_x.extend([f"{prefix} {x}" for x in x_data])
+                combined_y.extend(y_data)
+                combined_var.extend(y_var if y_var else [0.0] * len(y_data))
+        all_x.append(combined_x)
+        all_y.append(combined_y)
+        all_var.append(combined_var)
+    
+    # Get plot metadata from first source
+    first_row = all_data[0][0] if all_data and all_data[0] else {}
     pl.DataFrame({
-        'signal': [1], 'source': ['merged'], 'conditions': [len(common_conds)],
-        'folder_path': [os.path.abspath(out_folder)]
-    }).write_parquet(signal_path)
-    print(f"[merging] Output: {signal_path} ({len(common_conds)} conditions)")
-    return signal_path
+        'labels': [common_conds],
+        'x_data': [all_x[0] if all_x else []],  # x_data is shared (same categories)
+        'y_data': [all_y],
+        'y_var': [all_var],
+        'plot_type': [first_row.get('plot_type', 'bar')],
+        'x_label': ['Measure'],
+        'y_label': [first_row.get('y_label', 'Value')],
+        'y_ticks': [first_row.get('y_ticks')]
+    }).write_parquet(concat_path)
+    print(f"[merging] Concatenated output: {concat_path}")
+    print(concat_path)
+    return concat_path
 
 if __name__ == '__main__':
     args = sys.argv[1:]
