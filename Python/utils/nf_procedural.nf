@@ -39,9 +39,9 @@ workflow workflow_wrapper {
             def INACTIVITY_MS = 15000  // 15 seconds of no new trace entries after all done
             
             // Terminal statuses (process is done, allows finalization)
-            def TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'ABORTED'] as Set
-            // Blocking statuses (process not done, prevents finalization)
-            def BLOCKING_STATUSES = ['SUBMITTED', 'RUNNING', 'PENDING', 'CACHED'] as Set
+            def TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'ABORTED', 'CACHED'] as Set
+            // Blocking statuses (process not done, prevents finalization)  
+            def BLOCKING_STATUSES = ['SUBMITTED', 'RUNNING', 'PENDING'] as Set
             
             while (true) {
                 try {
@@ -61,12 +61,24 @@ workflow workflow_wrapper {
                         def completed = procs.findAll { it.value == 'COMPLETED' }
                         def failed = procs.findAll { it.value == 'FAILED' }
                         def aborted = procs.findAll { it.value == 'ABORTED' }
+                        def cached = procs.findAll { it.value == 'CACHED' }
+                        
+                        def inactiveMs = now - lastTime
+                        
+                        // Debug: Log participant status periodically (every ~30 seconds per participant)
+                        if (inactiveMs > 10000 && inactiveMs < 35000) {
+                            println "[watchdog] ${pid}: ${procs.size()} procs, ${blocking.size()} blocking, ${completed.size()} done, ${cached.size()} cached, inactive ${inactiveMs}ms"
+                            if (blocking.size() > 0) {
+                                println "[watchdog] ${pid} blocked by: ${blocking.keySet().join(', ')}"
+                            }
+                        }
                         
                         // Only finalize if: has processes AND none blocking AND inactive
                         // Also require minimum number of processes to avoid premature finalization
                         def min_processes = 5  // At least reader, tree, and a few other processes should run
                         if (procs.size() >= min_processes && blocking.size() == 0 && (now - lastTime > INACTIVITY_MS)) {
                             if (finalized_participants.add(pid)) {
+                                println "[watchdog] Finalizing ${pid}: ${completed.size() + cached.size()} succeeded, ${failed.size()} failed"
                                 def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
                                 if (pid_log.exists()) {
                                     pid_log.append("[${new Date().format('yyyy-MM-dd HH:mm:ss')}] Pipeline complete: ${completed.size()} succeeded, ${failed.size()} failed, ${aborted.size()} skipped\n")
@@ -86,9 +98,13 @@ workflow workflow_wrapper {
                     
                     if (nameIdx < 0 || statusIdx < 0 || processIdx < 0) continue
                     
-                    // Process new lines only
+                    // Process new lines only - filter to lines starting with task_id (number)
                     for (int i = last_line_count ?: 1; i < lines.size(); i++) {
-                        def cols = lines[i].split('\t')
+                        def line = lines[i]
+                        // Skip continuation lines (script content) - valid trace lines start with task_id (number)
+                        if (!line || !line[0].isDigit()) continue
+                        
+                        def cols = line.split('\t')
                         if (cols.size() <= Math.max(nameIdx, Math.max(statusIdx, processIdx))) continue
                         
                         def taskName = cols[nameIdx]
