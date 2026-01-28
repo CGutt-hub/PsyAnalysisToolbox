@@ -115,8 +115,9 @@ def merge_plot_data(ip: list[str], prefixes: list[str] | None = None, output_suf
             'y_label': [y_label], 'y_ticks': [y_ticks]
         }).write_parquet(os.path.join(out_folder, f"{pid}{output_suffix}{idx+1}.parquet"))
     
-    # Also create a concatenated output file (compatible with plotter/relative_analyzer)
-    concat_path = os.path.join(os.getcwd(), f"{pid}{output_suffix}_concat.parquet")
+    # Create concatenated output file (compatible with plotter/relative_analyzer)
+    # Output goes to {pid}{output_suffix}.parquet (no _concat suffix) to match pipeline expectations
+    concat_path = os.path.join(os.getcwd(), f"{pid}{output_suffix}.parquet")
     all_x, all_y, all_var = [], [], []
     for cond in common_conds:
         combined_x, combined_y, combined_var = [], [], []

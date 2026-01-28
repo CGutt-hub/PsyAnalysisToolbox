@@ -63,7 +63,9 @@ workflow workflow_wrapper {
                         def aborted = procs.findAll { it.value == 'ABORTED' }
                         
                         // Only finalize if: has processes AND none blocking AND inactive
-                        if (procs.size() > 0 && blocking.size() == 0 && (now - lastTime > INACTIVITY_MS)) {
+                        // Also require minimum number of processes to avoid premature finalization
+                        def min_processes = 5  // At least reader, tree, and a few other processes should run
+                        if (procs.size() >= min_processes && blocking.size() == 0 && (now - lastTime > INACTIVITY_MS)) {
                             if (finalized_participants.add(pid)) {
                                 def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
                                 if (pid_log.exists()) {
@@ -168,16 +170,23 @@ def finalize_participant(String pid, String results_path, Map branch_status, int
     def timestamp = new java.text.SimpleDateFormat('yyyy-MM-dd HH:mm:ss').format(new Date())
     def log_file = new File("${results_path}/${pid}/${pid}_pipeline.log")
     
+    // Debug: Log finalization attempt
+    println "[finalize] Starting finalization for ${pid} at ${results_path}"
+    
     def completed = branch_status.findAll { it.value == 'COMPLETED' }.keySet().toList()
     def failed = branch_status.findAll { it.value == 'FAILED' }.keySet().toList()
     def status = failed.isEmpty() ? 'SUCCESS' : 'PARTIAL'
     
     // Write completion summary to participant's log
-    log_file.append("\n=== Pipeline ${status}: ${timestamp} ===\n")
-    log_file.append("=== Branches completed: ${completed.size()}/${total_terminals} ===\n")
-    log_file.append("=== Completed: ${completed.sort().join(', ')} ===\n")
-    if (failed) {
-        log_file.append("=== FAILED: ${failed.sort().join(', ')} ===\n")
+    if (log_file.exists()) {
+        log_file.append("\n=== Pipeline ${status}: ${timestamp} ===\n")
+        log_file.append("=== Branches completed: ${completed.size()}/${total_terminals} ===\n")
+        log_file.append("=== Completed: ${completed.sort().join(', ')} ===\n")
+        if (failed) {
+            log_file.append("=== FAILED: ${failed.sort().join(', ')} ===\n")
+        }
+    } else {
+        println "[finalize] Warning: Log file not found: ${log_file.absolutePath}"
     }
     
     // Git sync with lock - find git repo root by going up from results_path

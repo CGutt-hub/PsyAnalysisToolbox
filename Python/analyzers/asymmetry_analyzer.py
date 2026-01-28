@@ -3,17 +3,17 @@ import polars as pl, numpy as np, sys, ast, os
 def compute_asymmetry(ip: str, pairs: list[tuple[str,str]], mode: str = 'log', 
                       band: str | None = None, y_lim: float | None = None, 
                       y_label: str | None = None, suffix: str = 'asym') -> str:
-    """Compute asymmetry between paired channels/regions. Generic for PSD and fNIRS.
+    """Compute asymmetry between paired channels/regions.
     
     Supports two input formats:
-    1. PSD format: columns [channel, band, power, power_std] - per-channel spectral data
-    2. ROI format: columns [condition, x_data, y_data, y_var] - group_analyzer output
+    1. Channel format: columns [channel, band, power, power_std, n_epochs] - per-channel data
+    2. ROI format: columns [condition, x_data, y_data, y_var] - grouped region data
     
     Args:
         ip: Input parquet file (single condition)
-        pairs: List of (left, right) pairs, e.g. [('F3', 'F4')] or [('Left PFC', 'Right PFC')]
+        pairs: List of (left, right) pairs, e.g. [('F3', 'F4')] or [('Left', 'Right')]
         mode: 'log' for ln(R)-ln(L), 'diff' for R-L (default: 'log')
-        band: Frequency band (required for PSD format, ignored for ROI format)
+        band: Category/band filter (required for channel format, ignored for ROI format)
         y_lim: Optional Y-axis limit (symmetric around 0)
         y_label: Optional Y-axis label
         suffix: Output file suffix
@@ -27,21 +27,21 @@ def compute_asymmetry(ip: str, pairs: list[tuple[str,str]], mode: str = 'log',
     
     # Detect input format
     if 'channel' in df.columns and 'power' in df.columns:
-        # PSD format
+        # Channel format: per-channel data with band categories
         if band is None:
-            print("[asymmetry] Error: band parameter required for PSD format")
+            print("[asymmetry] Error: band parameter required for channel format")
             sys.exit(1)
         cond = df['condition'][0] if 'condition' in df.columns else base
-        data_dict = _extract_psd_data(df, band)
+        data_dict = _extract_channel_data(df, band)
         label = y_label or f'Asymmetry ({band})'
     elif 'x_data' in df.columns and 'y_data' in df.columns:
-        # ROI format (group_analyzer output)
+        # ROI format: grouped region data
         row = df.to_dicts()[0]
         cond = row.get('condition', base)
         data_dict = _extract_roi_data(row)
         label = y_label or 'Asymmetry (R - L)'
     else:
-        print(f"[asymmetry] Error: Unknown input format. Expected PSD (channel,band,power) or ROI (x_data,y_data)")
+        print(f"[asymmetry] Error: Unknown input format. Expected channel (channel,band,power) or ROI (x_data,y_data)")
         sys.exit(1)
     
     # Compute asymmetry for each pair
@@ -86,14 +86,19 @@ def compute_asymmetry(ip: str, pairs: list[tuple[str,str]], mode: str = 'log',
     print(out_path)
     return out_path
 
-def _extract_psd_data(df: pl.DataFrame, band: str) -> dict[str, tuple[float, float]]:
-    """Extract {channel: (power, variance)} from PSD format."""
+def _extract_channel_data(df: pl.DataFrame, band: str) -> dict[str, tuple[float, float]]:
+    """Extract {channel: (value, SEM)} from channel format.
+    
+    Channel files contain columns: channel, band, power, power_std, n_epochs.
+    SEM = std / sqrt(n_epochs) for proper error propagation."""
     data = {}
     for row in df.filter(pl.col('band') == band).to_dicts():
         ch = row['channel']
         power = float(row['power'])
-        var = float(row.get('power_std', 0.0)) ** 2
-        data[ch] = (power, var)
+        std = float(row.get('power_std', 0.0))
+        n = int(row.get('n_epochs', 1))
+        sem = std / np.sqrt(n) if n > 0 else std  # Convert std to SEM
+        data[ch] = (power, sem)
     return data
 
 def _extract_roi_data(row: dict) -> dict[str, tuple[float, float]]:
@@ -125,7 +130,7 @@ if __name__ == '__main__':
             print('Usage: asymmetry_analyzer.py <input.parquet> <pairs> [mode] [band] [y_lim] [y_label] [suffix]')
             print('  pairs: Python list, e.g. "[(\'F3\',\'F4\'),(\'F7\',\'F8\')]" or "[(\'Left\',\'Right\')]"')
             print('  mode: "log" for ln(R)-ln(L) (default), "diff" for R-L')
-            print('  band: Required for PSD input (e.g., "alpha"), ignored for ROI input')
+            print('  band: Required for channel format, ignored for ROI format')
             sys.exit(1)
         
         ip = args[1]
