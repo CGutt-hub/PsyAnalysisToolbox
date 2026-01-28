@@ -23,7 +23,10 @@ def merge_columns(ip: list[str], keys: list[str], output_suffix: str = 'merged')
 def merge_plot_data(ip: list[str], prefixes: list[str] | None = None, output_suffix: str = 'merged') -> str:
     """Merge plot-ready parquet files by combining x_data/y_data arrays per condition.
     
-    Each input file should have rows with: condition, x_data, y_data, y_var
+    Supports two input formats:
+    1. Multi-row: Each file has rows with condition, x_data, y_data, y_var (one row per condition)
+    2. Concatenated: Single row with labels list and nested y_data/y_var lists
+    
     Output combines x_data/y_data from all sources for matching conditions."""
     for f in ip:
         if not os.path.exists(f): print(f"[merging] File not found: {f}"); sys.exit(1)
@@ -32,18 +35,50 @@ def merge_plot_data(ip: list[str], prefixes: list[str] | None = None, output_suf
     prefixes = prefixes or [f"src{i+1}" for i in range(len(ip))]
     print(f"[merging] Plot data merge: {len(ip)} files with prefixes: {prefixes}")
     
-    dfs = [pl.read_parquet(f) for f in ip]
-    required = {'condition', 'x_data', 'y_data'}
-    for i, df in enumerate(dfs):
-        missing = required - set(df.columns)
-        if missing: print(f"[merging] Error: Columns {missing} not in {ip[i]}"); sys.exit(1)
+    # Load and normalize to per-condition format
+    def load_and_expand(filepath: str) -> list[dict]:
+        """Load file and expand to list of per-condition dicts."""
+        df = pl.read_parquet(filepath)
+        row = df.to_dicts()[0]
+        
+        # Check format: concatenated (has 'labels') vs multi-row (has 'condition')
+        if 'labels' in row:
+            # Concatenated format: single row with labels list and nested data
+            labels = row['labels']
+            x_data = row.get('x_data', [])
+            y_data_nested = row.get('y_data', [])
+            y_var_nested = row.get('y_var', [])
+            
+            result = []
+            for i, label in enumerate(labels):
+                result.append({
+                    'condition': label,
+                    'x_data': x_data,  # x_data is shared across conditions
+                    'y_data': y_data_nested[i] if i < len(y_data_nested) else [],
+                    'y_var': y_var_nested[i] if i < len(y_var_nested) else [],
+                    'plot_type': row.get('plot_type', 'bar'),
+                    'y_label': row.get('y_label', 'Value'),
+                    'y_ticks': row.get('y_ticks')
+                })
+            return result
+        elif 'condition' in df.columns:
+            # Multi-row format: one row per condition
+            return df.to_dicts()
+        else:
+            print(f"[merging] Error: File {filepath} has neither 'labels' nor 'condition' column")
+            sys.exit(1)
+    
+    # Load all files
+    all_data = [load_and_expand(f) for f in ip]
     
     # Find common conditions
-    all_conds = [set(df['condition'].to_list()) for df in dfs]
+    all_conds = [set(d['condition'] for d in data) for data in all_data]
     common_conds = sorted(functools.reduce(lambda a, b: a & b, all_conds))
     if not common_conds:
         print(f"[merging] Warning: No common conditions, using union")
         common_conds = sorted(functools.reduce(lambda a, b: a | b, all_conds))
+    
+    print(f"[merging] Conditions: {common_conds}")
     
     # Extract participant ID from first file
     match = re.match(r'^([A-Za-z]+_\d+)', os.path.basename(ip[0]))
@@ -54,21 +89,25 @@ def merge_plot_data(ip: list[str], prefixes: list[str] | None = None, output_suf
     # Merge per condition
     for idx, cond in enumerate(common_conds):
         combined_x, combined_y, combined_var = [], [], []
-        for df, prefix in zip(dfs, prefixes):
-            row = df.filter(pl.col('condition') == cond).to_dicts()
-            if row:
-                x_data = row[0].get('x_data', [])
-                y_data = row[0].get('y_data', [])
-                y_var = row[0].get('y_var', [0.0] * len(y_data))
+        first_row = None
+        
+        for data, prefix in zip(all_data, prefixes):
+            rows = [d for d in data if d['condition'] == cond]
+            if rows:
+                row = rows[0]
+                if first_row is None:
+                    first_row = row
+                x_data = row.get('x_data', [])
+                y_data = row.get('y_data', [])
+                y_var = row.get('y_var', [0.0] * len(y_data))
                 combined_x.extend([f"{prefix} {x}" for x in x_data])
                 combined_y.extend(y_data)
                 combined_var.extend(y_var if y_var else [0.0] * len(y_data))
         
         print(f"[merging]   {cond}: {len(combined_y)} values from {len(ip)} sources")
-        first_row = dfs[0].filter(pl.col('condition') == cond).to_dicts()
-        plot_type = first_row[0].get('plot_type', 'bar') if first_row else 'bar'
-        y_label = first_row[0].get('y_label', 'Value') if first_row else 'Value'
-        y_ticks = first_row[0].get('y_ticks', None) if first_row else None
+        plot_type = first_row.get('plot_type', 'bar') if first_row else 'bar'
+        y_label = first_row.get('y_label', 'Value') if first_row else 'Value'
+        y_ticks = first_row.get('y_ticks', None) if first_row else None
         
         pl.DataFrame({
             'condition': [cond], 'x_data': [combined_x], 'y_data': [combined_y],

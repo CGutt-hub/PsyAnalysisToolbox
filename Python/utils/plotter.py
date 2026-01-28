@@ -178,9 +178,13 @@ def plot(df, pdf_path):
         # Original single-plot layout
         fig, ax = plt.subplots(figsize=(12, 6))
         
+        # For bar plots with concatenated y_data but flat x_data, use x_data directly as categories
+        # This handles cases like fnirs_asym where x_data=['Left PFC-Right PFC'] and y_data=[[-5.3], [9.5], [-2.2]]
+        get_cats = lambda: to_lst(x_data[0]) if is_concat_x else x_data
+        
         (([ax.plot(to_lst(xd), to_lst(yd), linewidth=2.5, label=lbl(i), alpha=0.85, color=colors[i % len(colors)]) for i, (xd, yd) in enumerate(zip(x_data, y_data))], ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='gray')) if plot_type == 'line' else
          ([ax.scatter(to_lst(xd), to_lst(yd), s=50, label=lbl(i), alpha=0.7, color=colors[i % len(colors)]) for i, (xd, yd) in enumerate(zip(x_data, y_data))], ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='gray')) if plot_type == 'scatter' else
-         (lambda n_cond, cats, w: ([ax.bar([i + (j - len(cats)/2 + 0.5) * w for i in range(n_cond)], [to_lst(y_data[i])[j] for i in range(n_cond)], width=w, label=cats[j], yerr=safe_yerr([to_lst(y_var[i])[j] if i < len(y_var) and j < len(to_lst(y_var[i])) else 0 for i in range(n_cond)]) if y_var else None, color=colors[j % len(colors)], alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}) for j in range(len(cats))], ax.set_xticks(range(n_cond)), ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=11), ax.legend(loc='upper right', fontsize=10, framealpha=0.95, edgecolor='gray')))(len(labels), to_lst(x_data[0]), 0.75 / len(to_lst(x_data[0])) if len(to_lst(x_data[0])) > 0 else 0.75) if plot_type == 'bar' else None) if is_concat else (
+         (lambda n_cond, cats, w: ([ax.bar([i + (j - len(cats)/2 + 0.5) * w for i in range(n_cond)], [to_lst(y_data[i])[j] for i in range(n_cond)], width=w, label=cats[j], yerr=safe_yerr([to_lst(y_var[i])[j] if i < len(y_var) and j < len(to_lst(y_var[i])) else 0 for i in range(n_cond)]) if y_var else None, color=colors[j % len(colors)], alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}) for j in range(len(cats))], ax.set_xticks(range(n_cond)), ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=11), ax.legend(loc='upper right', fontsize=10, framealpha=0.95, edgecolor='gray')))(len(labels), get_cats(), 0.75 / len(get_cats()) if len(get_cats()) > 0 else 0.75) if plot_type == 'bar' else None) if is_concat else (
          ax.plot(x_data, y_data, linewidth=2.5, alpha=0.85, color='dimgray') if plot_type == 'line' else
          ax.scatter(x_data, y_data, s=50, alpha=0.7, color='dimgray') if plot_type == 'scatter' else
          (ax.bar(range(len(y_data)), y_data, yerr=safe_yerr(y_var) if y_var else None, color='dimgray', alpha=0.85, capsize=4, error_kw={'linewidth': 1.5}), ax.set_xticks(range(len(x_data))), ax.set_xticklabels([truncate(x) for x in x_data], rotation=45, ha='right', fontsize=10)))
