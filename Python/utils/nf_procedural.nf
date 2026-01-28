@@ -180,19 +180,34 @@ def finalize_participant(String pid, String results_path, Map branch_status, int
         log_file.append("=== FAILED: ${failed.sort().join(', ')} ===\n")
     }
     
-    // Git sync with lock
+    // Git sync with lock - find git repo root by going up from results_path
     lock.lock()
     try {
-        def git_status = ["git", "-C", results_path, "status", "--porcelain"].execute()
+        // Find the git repository root (traverse up from results_path)
+        def git_root = new File(results_path)
+        while (git_root != null && !new File(git_root, ".git").exists()) {
+            git_root = git_root.getParentFile()
+        }
+        
+        if (git_root == null) {
+            log_file.append("[${timestamp}] Git error: No git repository found above ${results_path}\n")
+            return
+        }
+        
+        def git_root_path = git_root.getAbsolutePath()
+        log_file.append("[${timestamp}] Git repo root: ${git_root_path}\n")
+        
+        def git_status = ["git", "-C", git_root_path, "status", "--porcelain"].execute()
         git_status.waitFor()
         
         if (git_status.text.trim()) {
-            ["git", "-C", results_path, "add", "."].execute().waitFor()
+            ["git", "-C", git_root_path, "add", "."].execute().waitFor()
             def msg = "${status}: ${pid} (${completed.size()}/${total_terminals})"
             if (failed) msg += " - failed: ${failed.join(',')}"
-            ["git", "-C", results_path, "commit", "-m", msg].execute().waitFor()
-            ["git", "-C", results_path, "push"].execute().waitFor()
-            log_file.append("[${timestamp}] Git sync complete\n")
+            ["git", "-C", git_root_path, "commit", "-m", msg].execute().waitFor()
+            def push_proc = ["git", "-C", git_root_path, "push"].execute()
+            push_proc.waitFor()
+            log_file.append("[${timestamp}] Git sync complete (exit: ${push_proc.exitValue()})\n")
         }
     } catch (Exception e) {
         log_file.append("[${timestamp}] Git error: ${e.message}\n")
