@@ -64,12 +64,16 @@ workflow workflow_wrapper {
                         def cached = procs.findAll { it.value == 'CACHED' }
                         
                         def inactiveMs = now - lastTime
+                        def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
                         
-                        // Debug: Log participant status periodically (every ~30 seconds per participant)
+                        // Debug: Log participant status periodically to participant's log file (every ~30 seconds per participant)
                         if (inactiveMs > 10000 && inactiveMs < 35000) {
-                            println "[watchdog] ${pid}: ${procs.size()} procs, ${blocking.size()} blocking, ${completed.size()} done, ${cached.size()} cached, inactive ${inactiveMs}ms"
-                            if (blocking.size() > 0) {
-                                println "[watchdog] ${pid} blocked by: ${blocking.keySet().join(', ')}"
+                            if (pid_log.exists()) {
+                                def ts = new Date().format('yyyy-MM-dd HH:mm:ss')
+                                pid_log.append("[${ts}] [watchdog] ${pid}: ${procs.size()} procs, ${blocking.size()} blocking, ${completed.size()} done, ${cached.size()} cached, inactive ${inactiveMs}ms\n")
+                                if (blocking.size() > 0) {
+                                    pid_log.append("[${ts}] [watchdog] ${pid} blocked by: ${blocking.keySet().join(', ')}\n")
+                                }
                             }
                         }
                         
@@ -78,10 +82,8 @@ workflow workflow_wrapper {
                         def min_processes = 5  // At least reader, tree, and a few other processes should run
                         if (procs.size() >= min_processes && blocking.size() == 0 && (now - lastTime > INACTIVITY_MS)) {
                             if (finalized_participants.add(pid)) {
-                                println "[watchdog] Finalizing ${pid}: ${completed.size() + cached.size()} succeeded, ${failed.size()} failed"
-                                def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
                                 if (pid_log.exists()) {
-                                    pid_log.append("[${new Date().format('yyyy-MM-dd HH:mm:ss')}] Pipeline complete: ${completed.size()} succeeded, ${failed.size()} failed, ${aborted.size()} skipped\n")
+                                    pid_log.append("[${new Date().format('yyyy-MM-dd HH:mm:ss')}] [watchdog] Finalizing ${pid}: ${completed.size() + cached.size()} succeeded, ${failed.size()} failed\n")
                                 }
                                 finalize_participant(pid, results_path, procs, procs.size(), git_lock)
                             }
@@ -186,23 +188,45 @@ def finalize_participant(String pid, String results_path, Map branch_status, int
     def timestamp = new java.text.SimpleDateFormat('yyyy-MM-dd HH:mm:ss').format(new Date())
     def log_file = new File("${results_path}/${pid}/${pid}_pipeline.log")
     
-    // Debug: Log finalization attempt
-    println "[finalize] Starting finalization for ${pid} at ${results_path}"
+    // Debug: Log finalization attempt to participant's log
+    if (log_file.exists()) {
+        log_file.append("[${timestamp}] [finalize] Starting finalization for ${pid}\n")
+    }
     
     def completed = branch_status.findAll { it.value == 'COMPLETED' }.keySet().toList()
     def failed = branch_status.findAll { it.value == 'FAILED' }.keySet().toList()
+    def cached = branch_status.findAll { it.value == 'CACHED' }.keySet().toList()
     def status = failed.isEmpty() ? 'SUCCESS' : 'PARTIAL'
     
     // Write completion summary to participant's log
     if (log_file.exists()) {
         log_file.append("\n=== Pipeline ${status}: ${timestamp} ===\n")
-        log_file.append("=== Branches completed: ${completed.size()}/${total_terminals} ===\n")
+        log_file.append("=== Branches completed: ${completed.size() + cached.size()}/${total_terminals} ===\n")
         log_file.append("=== Completed: ${completed.sort().join(', ')} ===\n")
+        if (cached) {
+            log_file.append("=== Cached: ${cached.sort().join(', ')} ===\n")
+        }
         if (failed) {
             log_file.append("=== FAILED: ${failed.sort().join(', ')} ===\n")
         }
-    } else {
-        println "[finalize] Warning: Log file not found: ${log_file.absolutePath}"
+        log_file.append("=== Pipeline finished: ${timestamp} for ${pid} ===\n\n")
+    }
+    
+    // Helper to run git command and capture output to log file
+    def runGit = { List<String> cmd, File logFile ->
+        def proc = cmd.execute()
+        def stdout = new StringBuilder()
+        def stderr = new StringBuilder()
+        proc.consumeProcessOutput(stdout, stderr)
+        proc.waitFor()
+        def ts = new java.text.SimpleDateFormat('yyyy-MM-dd HH:mm:ss').format(new Date())
+        if (stdout.toString().trim()) {
+            logFile.append("[${ts}] [finalize] git stdout: ${stdout.toString().trim()}\n")
+        }
+        if (stderr.toString().trim()) {
+            logFile.append("[${ts}] [finalize] git stderr: ${stderr.toString().trim()}\n")
+        }
+        return [exitCode: proc.exitValue(), stdout: stdout.toString(), stderr: stderr.toString()]
     }
     
     // Git sync with lock - find git repo root by going up from results_path
@@ -215,27 +239,69 @@ def finalize_participant(String pid, String results_path, Map branch_status, int
         }
         
         if (git_root == null) {
-            log_file.append("[${timestamp}] Git error: No git repository found above ${results_path}\n")
+            if (log_file.exists()) {
+                log_file.append("[${timestamp}] [finalize] Git error: No git repository found above ${results_path}\n")
+            }
             return
         }
         
         def git_root_path = git_root.getAbsolutePath()
-        log_file.append("[${timestamp}] Git repo root: ${git_root_path}\n")
+        if (log_file.exists()) {
+            log_file.append("[${timestamp}] [finalize] Git repo root: ${git_root_path}\n")
+        }
         
-        def git_status = ["git", "-C", git_root_path, "status", "--porcelain"].execute()
-        git_status.waitFor()
+        // Check git status
+        def statusResult = runGit(["git", "-C", git_root_path, "status", "--porcelain"], log_file)
+        log_file.append("[${timestamp}] [finalize] Git status check (exit: ${statusResult.exitCode})\n")
         
-        if (git_status.text.trim()) {
-            ["git", "-C", git_root_path, "add", "."].execute().waitFor()
-            def msg = "${status}: ${pid} (${completed.size()}/${total_terminals})"
+        if (statusResult.stdout.trim()) {
+            log_file.append("[${timestamp}] [finalize] Changes detected, starting sync...\n")
+            
+            // Pull first to avoid push conflicts (rebase to keep history clean)
+            log_file.append("[${timestamp}] [finalize] Pulling latest changes...\n")
+            def pullResult = runGit(["git", "-C", git_root_path, "pull", "--rebase", "--autostash"], log_file)
+            log_file.append("[${timestamp}] [finalize] Git pull (exit: ${pullResult.exitCode})\n")
+            
+            if (pullResult.exitCode != 0) {
+                log_file.append("[${timestamp}] [finalize] Warning: Pull failed, attempting to continue...\n")
+                // Try to abort rebase if stuck
+                runGit(["git", "-C", git_root_path, "rebase", "--abort"], log_file)
+            }
+            
+            // Stage all changes
+            def addResult = runGit(["git", "-C", git_root_path, "add", "."], log_file)
+            log_file.append("[${timestamp}] [finalize] Git add (exit: ${addResult.exitCode})\n")
+            
+            // Commit
+            def msg = "${status}: ${pid} (${completed.size() + cached.size()}/${total_terminals})"
             if (failed) msg += " - failed: ${failed.join(',')}"
-            ["git", "-C", git_root_path, "commit", "-m", msg].execute().waitFor()
-            def push_proc = ["git", "-C", git_root_path, "push"].execute()
-            push_proc.waitFor()
-            log_file.append("[${timestamp}] Git sync complete (exit: ${push_proc.exitValue()})\n")
+            def commitResult = runGit(["git", "-C", git_root_path, "commit", "-m", msg], log_file)
+            log_file.append("[${timestamp}] [finalize] Git commit (exit: ${commitResult.exitCode})\n")
+            
+            if (commitResult.exitCode == 0 || commitResult.stderr.contains("nothing to commit")) {
+                // Push with retry
+                def pushResult = runGit(["git", "-C", git_root_path, "push"], log_file)
+                log_file.append("[${timestamp}] [finalize] Git push (exit: ${pushResult.exitCode})\n")
+                
+                if (pushResult.exitCode != 0) {
+                    // Retry: pull and push again
+                    log_file.append("[${timestamp}] [finalize] Push failed, retrying with pull...\n")
+                    runGit(["git", "-C", git_root_path, "pull", "--rebase", "--autostash"], log_file)
+                    pushResult = runGit(["git", "-C", git_root_path, "push"], log_file)
+                    log_file.append("[${timestamp}] [finalize] Git push retry (exit: ${pushResult.exitCode})\n")
+                }
+                // Note: Final sync status not logged here to avoid unsynced state in log file
+            } else {
+                log_file.append("[${timestamp}] [finalize] Git commit failed, skipping push\n")
+            }
+        } else {
+            log_file.append("[${timestamp}] [finalize] No changes to sync\n")
         }
     } catch (Exception e) {
-        log_file.append("[${timestamp}] Git error: ${e.message}\n")
+        if (log_file.exists()) {
+            log_file.append("[${timestamp}] [finalize] Git error: ${e.message}\n")
+            log_file.append("[${timestamp}] [finalize] Stack trace: ${e.getStackTrace().take(5).join('\\n')}\n")
+        }
     } finally {
         lock.unlock()
     }
