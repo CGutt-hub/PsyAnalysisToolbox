@@ -54,7 +54,7 @@ def _epoch_mne(raw, events: Dict[str, List[Tuple[float, float]]], data_path: str
             if 0 <= sample < max_samples:
                 event_list.append([sample, 0, event_id[condition]])
             else:
-                print(f"[epoching] Warning: {condition} epoch at sample {sample} out of range")
+                print(f"[epoching] Warning: {condition} epoch at sample {sample} out of range (0-{max_samples})")
     
     if not event_list:
         print(f"[epoching] Error: No valid events")
@@ -68,11 +68,29 @@ def _epoch_mne(raw, events: Dict[str, List[Tuple[float, float]]], data_path: str
     
     print(f"[epoching] Epoching: 0-{tmax:.1f}s, {len(mne_events)} valid events")
     
+    # Check which epochs might be dropped due to data boundary
+    for evt in mne_events:
+        sample, _, cond_id = evt
+        end_sample = sample + int(tmax * raw.info['sfreq'])
+        if end_sample > max_samples:
+            cond_name = [k for k, v in event_id.items() if v == cond_id][0]
+            print(f"[epoching] Warning: {cond_name} epoch at sample {sample} will be truncated (end {end_sample} > {max_samples})")
+    
     # Create and flatten epochs
     epochs_obj = mne.Epochs(raw, mne_events, event_id=event_id, tmin=0.0, tmax=tmax, 
                            baseline=None, preload=True, verbose=False)
     
     print(f"[epoching] Created: {len(epochs_obj)} epochs")
+    
+    # Log which epochs were actually created vs dropped
+    if len(epochs_obj) < len(mne_events):
+        dropped = len(mne_events) - len(epochs_obj)
+        # Count epochs per condition
+        created_counts = {cond: len(epochs_obj[cond]) for cond in event_id.keys()}
+        requested_counts = {cond: sum(1 for e in mne_events if e[2] == event_id[cond]) for cond in event_id.keys()}
+        for cond in event_id.keys():
+            if created_counts[cond] < requested_counts[cond]:
+                print(f"[epoching] Warning: {cond} lost {requested_counts[cond] - created_counts[cond]} epoch(s) (had {requested_counts[cond]}, got {created_counts[cond]})")
     
     dfs = []
     for cond in sorted(event_id.keys()):

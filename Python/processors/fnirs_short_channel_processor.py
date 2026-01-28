@@ -28,7 +28,7 @@ def apply_regression(ip: str, regr_type: str = 'short_channel', out: str | None 
             short_channels = [c for c in raw.ch_names if re.search(r'(^s\d+\b)|short|_sd|_short', c, re.I)]
             
             if not short_channels:
-                print(f"[fnirs_short_channel] No short channels detected, skipping regression")
+                print(f"[fnirs_short_channel] Warning: No short channels detected, skipping regression")
                 out_file = out or f"{base}_{suffix}.fif"
                 raw.save(out_file, overwrite=True, verbose=False)
                 print(f"[fnirs_short_channel] Output (MNE Raw): {out_file}")
@@ -73,7 +73,7 @@ def apply_regression(ip: str, regr_type: str = 'short_channel', out: str | None 
         short_channels = [c for c in data_cols if re.search(r'(^s\d+\b)|short|_sd|_short', c, re.I)]
         
         if not short_channels:
-            print(f"[fnirs_short_channel] No short channels detected, skipping regression")
+            print(f"[fnirs_short_channel] Warning: No short channels detected, skipping regression")
             out_file = out or f"{ip.replace('.parquet', '')}_{suffix}.parquet"
             df.write_parquet(out_file)
             return out_file

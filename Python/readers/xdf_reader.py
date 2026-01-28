@@ -79,7 +79,7 @@ def read_xdf(ip):
             n_channels = len(ch_names) if ch_names else 0
             print(f"[xdf_reader] Stream {i+1}/{len(streams)} ({stream_type}): {n_samples} samples, {n_channels} channels -> .fif")
         else:
-            print(f"[xdf_reader] Stream {i+1}/{len(streams)} ({stream_type}): Empty or not suitable for .fif, skipped .fif")
+            print(f"[xdf_reader] Warning: Stream {i+1}/{len(streams)} ({stream_type}) empty or not suitable for .fif, skipped")
         # Save as parquet (always attempt)
         df = make_df(s)
         df.write_parquet(parquet_path)

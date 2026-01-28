@@ -1,7 +1,8 @@
 import polars as pl, numpy as np, sys, os
 
 def analyze_intervals(ip: str, event_col: str | None = None, y_lim: float | None = None, 
-                      y_label: str = 'Value (ms)', suffix: str = 'interval') -> str:
+                      y_label: str = 'Value (ms)', suffix: str = 'interval',
+                      metrics_mode: str = 'auto') -> str:
     """
     Analyze inter-event intervals (SDNN, RMSSD) per condition from epoched point process data.
     Generic interval analyzer - works on any point process (R-peaks, blinks, keystrokes, etc.)
@@ -12,6 +13,7 @@ def analyze_intervals(ip: str, event_col: str | None = None, y_lim: float | None
         y_lim: Optional Y-axis maximum limit
         y_label: Label for y-axis (e.g., 'Value (ms)', 'IBI (ms)')
         suffix: Output file suffix (default 'interval', use 'hrv' for HRV compatibility)
+        metrics_mode: 'auto' (both SDNN+RMSSD), 'SDNN', or 'RMSSD' for single metric
     
     Returns:
         Path to signal file
@@ -67,7 +69,7 @@ def analyze_intervals(ip: str, event_col: str | None = None, y_lim: float | None
             rmssd_per_epoch.append(float(np.sqrt(np.mean(np.diff(intervals) ** 2))))
         
         if not sdnn_per_epoch:
-            print(f"[interval]   {cond}: No valid epochs, skipping")
+            print(f"[interval] Warning: {cond} has no valid epochs, skipping")
             continue
         
         # Calculate mean and SEM across epochs
@@ -76,11 +78,19 @@ def analyze_intervals(ip: str, event_col: str | None = None, y_lim: float | None
         rmssd_mean = float(np.mean(rmssd_per_epoch))
         rmssd_sem = float(np.std(rmssd_per_epoch, ddof=1) / np.sqrt(len(rmssd_per_epoch))) if len(rmssd_per_epoch) > 1 else 0.0
         
+        # Build output based on metrics_mode
+        if metrics_mode.upper() == 'SDNN':
+            x_data, y_data, y_var = ['SDNN'], [sdnn_mean], [sdnn_sem]
+        elif metrics_mode.upper() == 'RMSSD':
+            x_data, y_data, y_var = ['RMSSD'], [rmssd_mean], [rmssd_sem]
+        else:  # auto - both metrics
+            x_data, y_data, y_var = ['SDNN', 'RMSSD'], [sdnn_mean, rmssd_mean], [sdnn_sem, rmssd_sem]
+        
         output = pl.DataFrame({
             'condition': [str(cond)],
-            'x_data': [['SDNN', 'RMSSD']],
-            'y_data': [[sdnn_mean, rmssd_mean]],
-            'y_var': [[sdnn_sem, rmssd_sem]],
+            'x_data': [x_data],
+            'y_data': [y_data],
+            'y_var': [y_var],
             'plot_type': ['bar'],
             'x_label': ['Interval Metric'],
             'y_label': [y_label],
@@ -104,11 +114,13 @@ def analyze_intervals(ip: str, event_col: str | None = None, y_lim: float | None
 
 if __name__ == '__main__':
     (lambda a: analyze_intervals(a[1],
-                                  a[2] if len(a) > 2 and a[2] else None,
-                                  float(a[3]) if len(a) > 3 and a[3] else None,
+                                  a[2] if len(a) > 2 and a[2] and a[2] != 'None' else None,
+                                  float(a[3]) if len(a) > 3 and a[3] and a[3] != 'None' else None,
                                   a[4] if len(a) > 4 else 'Value (ms)',
-                                  a[5] if len(a) > 5 else 'interval') if len(a) >= 2 else (
-        print('Compute interval statistics (SDNN, RMSSD, pNN50). Plot-ready output.'),
-        print('[interval] Usage: python interval_analyzer.py <epochs.parquet> [event_col] [y_lim] [y_label] [suffix]'),
-        print('[interval] Example: python interval_analyzer.py ecg_epochs.parquet R_Peak_Sample None "IBI (ms)" hrv'),
+                                  a[5] if len(a) > 5 else 'interval',
+                                  a[6] if len(a) > 6 else 'auto') if len(a) >= 2 else (
+        print('Compute interval statistics (SDNN, RMSSD). Plot-ready output.'),
+        print('[interval] Usage: python interval_analyzer.py <epochs.parquet> [event_col] [y_lim] [y_label] [suffix] [metrics_mode]'),
+        print('[interval] metrics_mode: auto (both SDNN+RMSSD), SDNN, or RMSSD'),
+        print('[interval] Example: python interval_analyzer.py ecg_epochs.parquet R_Peak_Sample None "IBI (ms)" hrv auto'),
         sys.exit(1)))(sys.argv)

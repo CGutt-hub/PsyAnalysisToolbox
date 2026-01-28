@@ -104,7 +104,7 @@ def preprocess_run(ip, entry_delim, depth_key, kv_delim):
         
         # Skip if children have no timestamps
         if any(get_onset(c) == float('inf') for c in children):
-            print(f"[tree] Skipping Level {level}: {len(children)} children (no timestamps)")
+            print(f"[tree] Warning: Skipping Level {level} - {len(children)} children have no timestamps")
             continue
         
         # Check if parents have timestamps

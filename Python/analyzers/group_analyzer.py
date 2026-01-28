@@ -65,9 +65,44 @@ def _auto_detect_groups(ch_cols: list[str]) -> dict[str, list[str]]:
     # Fallback: put all channels in one group
     return {'All': ch_cols}
 
+def _detect_chromophores(ch_cols: list[str]) -> dict[str, list[int]]:
+    """
+    Detect chromophore types from channel naming or position.
+    Returns dict mapping chromophore name to channel indices.
+    
+    Supports:
+    - MNE-NIRS style: 'S1_D1 hbo', 'S1_D1 hbr' -> explicit chromophore suffix
+    - Post-MBLL indexed: even indices = HbO, odd indices = HbR (pairwise transform output)
+    """
+    chromophores: dict[str, list[int]] = defaultdict(list)
+    
+    # First try to detect explicit chromophore names
+    for i, ch in enumerate(ch_cols):
+        ch_lower = ch.lower()
+        if 'hbo' in ch_lower or 'oxy' in ch_lower:
+            chromophores['HbO'].append(i)
+        elif 'hbr' in ch_lower or 'deoxy' in ch_lower:
+            chromophores['HbR'].append(i)
+        elif 'hbt' in ch_lower or 'total' in ch_lower:
+            chromophores['HbT'].append(i)
+    
+    # If explicit detection worked, return it
+    if chromophores:
+        return dict(chromophores)
+    
+    # Fallback: assume post-MBLL pairwise output (even=HbO, odd=HbR)
+    # This is the common case after linear_transform_processor with 'mbll' preset
+    if len(ch_cols) >= 2:
+        chromophores['HbO'] = list(range(0, len(ch_cols), 2))
+        chromophores['HbR'] = list(range(1, len(ch_cols), 2))
+        return dict(chromophores)
+    
+    # Single channel - just return as-is
+    return {'Signal': list(range(len(ch_cols)))}
+
 def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None, 
                    x_label: str = 'ROI', y_label: str = 'Mean', suffix: str = 'roi',
-                   baseline_sec: float = 2.0) -> str:
+                   baseline_sec: float = 2.0, chromophore_mode: str = 'auto') -> str:
     """
     Aggregate channels by groups (ROIs) and compute group-level statistics per condition.
     Generic group analyzer - works on epoched multichannel data.
@@ -79,11 +114,12 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
                        - Glob patterns: "1-*", "S?_D1", "[12]-*"
                        - Regex (prefix with 're:'): "re:^[1-4]-.*"
                        Example: {"DLPFC_L": ["1-*", "2-*"], "VMPFC": ["re:^[5-8]-"]}
-        y_lim: Optional Y-axis maximum limit
+        y_lim: Optional Y-axis maximum limit (symmetric around zero for relative data)
         x_label: Label for x-axis (e.g., 'ROI', 'Brain Region')
         y_label: Label for y-axis (e.g., 'HbO2 Change (μM)', 'Mean Activity')
         suffix: Output file suffix (default 'roi')
         baseline_sec: Seconds at start of each epoch to use as baseline (default 2.0)
+        chromophore_mode: 'auto' (detect HbO/HbR), 'combined' (average all), or specific like 'HbO'
     
     Returns:
         Path to signal file
@@ -106,7 +142,34 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
     print(f"[group] Available channels ({len(ch_cols)}): {ch_cols[:10]}..." if len(ch_cols) > 10 else f"[group] Available channels: {ch_cols}")
     print(f"[group] Looking for ROIs: {list(groups.keys())}")
     
-    # Validate groups with pattern matching
+    # Detect chromophores
+    chromophores = _detect_chromophores(ch_cols)
+    chrom_names = list(chromophores.keys())
+    print(f"[group] Detected chromophores: {chrom_names} (mode: {chromophore_mode})")
+    for cname, indices in chromophores.items():
+        print(f"[group]   {cname}: {len(indices)} channels")
+    
+    # Filter chromophores based on mode
+    if chromophore_mode == 'combined':
+        # Average all chromophores together (original behavior)
+        chromophores = {'Combined': list(range(len(ch_cols)))}
+        chrom_names = ['Combined']
+    elif chromophore_mode != 'auto' and chromophore_mode != 'all' and chromophore_mode in chromophores:
+        # Use only specified chromophore (e.g., 'HbO' or 'HbR')
+        chromophores = {chromophore_mode: chromophores[chromophore_mode]}
+        chrom_names = [chromophore_mode]
+    elif chromophore_mode == 'auto' or chromophore_mode == 'all':
+        # Auto/all mode: use all detected chromophores (HbO + HbR as subplots)
+        # Specify single chromophore (e.g., 'HbO') if you want only one
+        pass
+    elif ',' in chromophore_mode:
+        # Multiple chromophores specified: 'HbO,HbR'
+        requested = [c.strip() for c in chromophore_mode.split(',')]
+        chromophores = {c: chromophores[c] for c in requested if c in chromophores}
+        chrom_names = list(chromophores.keys())
+    # else: keep all detected
+    
+    # Validate groups with pattern matching (using original channel list)
     valid_groups = {}
     for name, members in groups.items():
         valid_chs = _match_channels(members, ch_cols)
@@ -141,56 +204,98 @@ def analyze_groups(ip: str, groups_config: str, y_lim: float | None = None,
             sfreq = 1.0 / (times[1] - times[0])
     baseline_samples = int(baseline_sec * sfreq) if sfreq else 0
     
-    print(f"[group] ROIs: {group_names}, Conditions: {conditions}")
+    print(f"[group] ROIs: {group_names}, Conditions: {conditions}, Chromophores: {chrom_names}")
     if baseline_samples > 0:
         print(f"[group] Per-epoch baseline correction: first {baseline_sec}s ({baseline_samples} samples)")
+    
+    # Build channel index lookup for ROIs
+    ch_to_idx = {ch: i for i, ch in enumerate(ch_cols)}
     
     for idx, cond in enumerate(conditions):
         cond_df = df.filter(pl.col('condition') == cond)
         epochs = cond_df['epoch_id'].unique().to_list()
         
-        roi_means, roi_sems = [], []
-        for roi_name in group_names:
-            roi_chs = valid_groups[roi_name]
-            
-            # Compute mean per epoch (with per-epoch baseline correction), then stats across epochs
-            epoch_means = []
-            for eid in epochs:
-                epoch_df = cond_df.filter(pl.col('epoch_id') == eid)
-                roi_data = epoch_df.select(roi_chs).to_numpy()
-                
-                # Per-epoch baseline correction: subtract mean of first N samples
-                if baseline_samples > 0 and roi_data.shape[0] > baseline_samples:
-                    baseline_mean = roi_data[:baseline_samples, :].mean(axis=0, keepdims=True)
-                    roi_data = roi_data - baseline_mean
-                
-                # Compute mean of post-baseline period (exclude baseline samples from mean)
-                if baseline_samples > 0 and roi_data.shape[0] > baseline_samples:
-                    post_baseline_data = roi_data[baseline_samples:, :]
-                    epoch_means.append(float(np.mean(post_baseline_data)))
-                else:
-                    epoch_means.append(float(np.mean(roi_data)))
-            
-            roi_means.append(float(np.mean(epoch_means)))
-            roi_sems.append(float(np.std(epoch_means, ddof=1) / np.sqrt(len(epoch_means))) if len(epoch_means) > 1 else 0.0)
+        # For each chromophore, compute ROI means
+        chrom_y_data = []
+        chrom_y_var = []
         
-        pl.DataFrame({
-            'condition': [cond],
-            'x_data': [group_names],
-            'y_data': [roi_means],
-            'y_var': [roi_sems],
-            'plot_type': ['grid'],  # Use 'grid' to match plotter's bar-grid layout
-            'x_label': [x_label],
-            'y_label': [y_label],
-            'y_ticks': [y_lim] if y_lim is not None else [None]
-        }).write_parquet(os.path.join(out_folder, f"{base}_{suffix}{idx+1}.parquet"))
-        print(f"[group]   {cond}: {len(epochs)} epochs, {len(group_names)} ROIs")
+        for chrom_name in chrom_names:
+            chrom_indices = set(chromophores[chrom_name])
+            
+            roi_means, roi_sems = [], []
+            for roi_name in group_names:
+                roi_chs = valid_groups[roi_name]
+                # Filter to only channels that belong to this chromophore
+                roi_ch_indices = [ch_to_idx[ch] for ch in roi_chs if ch_to_idx[ch] in chrom_indices]
+                roi_ch_names = [ch_cols[i] for i in roi_ch_indices]
+                
+                if not roi_ch_names:
+                    # No channels for this ROI-chromophore combination
+                    print(f"[group] Warning: No {chrom_name} channels for ROI '{roi_name}' in {cond}, using 0.0")
+                    roi_means.append(0.0)
+                    roi_sems.append(0.0)
+                    continue
+                
+                # Compute mean per epoch (with per-epoch baseline correction), then stats across epochs
+                epoch_means = []
+                for eid in epochs:
+                    epoch_df = cond_df.filter(pl.col('epoch_id') == eid)
+                    roi_data = epoch_df.select(roi_ch_names).to_numpy()
+                    
+                    # Per-epoch baseline correction: subtract mean of first N samples
+                    if baseline_samples > 0 and roi_data.shape[0] > baseline_samples:
+                        baseline_mean = roi_data[:baseline_samples, :].mean(axis=0, keepdims=True)
+                        roi_data = roi_data - baseline_mean
+                    
+                    # Compute mean of post-baseline period (exclude baseline samples from mean)
+                    if baseline_samples > 0 and roi_data.shape[0] > baseline_samples:
+                        post_baseline_data = roi_data[baseline_samples:, :]
+                        epoch_means.append(float(np.mean(post_baseline_data)))
+                    else:
+                        epoch_means.append(float(np.mean(roi_data)))
+                
+                roi_means.append(float(np.mean(epoch_means)))
+                roi_sems.append(float(np.std(epoch_means, ddof=1) / np.sqrt(len(epoch_means))) if len(epoch_means) > 1 else 0.0)
+            
+            chrom_y_data.append(roi_means)
+            chrom_y_var.append(roi_sems)
+        
+        # Create plot-ready output with chromophores as subplots
+        # If only one chromophore, use original single-level format
+        if len(chrom_names) == 1:
+            pl.DataFrame({
+                'condition': [cond],
+                'x_data': [group_names],
+                'y_data': [chrom_y_data[0]],
+                'y_var': [chrom_y_var[0]],
+                'plot_type': ['grid'],
+                'x_label': [x_label],
+                'y_label': [y_label],
+                'y_ticks': [y_lim] if y_lim is not None else [None]
+            }).write_parquet(os.path.join(out_folder, f"{base}_{suffix}{idx+1}.parquet"))
+        else:
+            # Multiple chromophores: nested data for subplot grid
+            # Labels are chromophore names (subplot titles)
+            pl.DataFrame({
+                'condition': [cond],
+                'x_data': [group_names],  # Shared x-axis (ROIs) for all subplots
+                'y_data': [chrom_y_data],  # Nested: [[HbO_rois], [HbR_rois], ...]
+                'y_var': [chrom_y_var],
+                'labels': [chrom_names],   # Subplot titles
+                'plot_type': ['grid'],
+                'x_label': [x_label],
+                'y_label': [y_label],
+                'y_ticks': [y_lim] if y_lim is not None else [None]
+            }).write_parquet(os.path.join(out_folder, f"{base}_{suffix}{idx+1}.parquet"))
+        
+        print(f"[group]   {cond}: {len(epochs)} epochs, {len(group_names)} ROIs × {len(chrom_names)} chromophores")
     
     signal_path = os.path.join(os.getcwd(), f"{base}_{suffix}.parquet")
     pl.DataFrame({
         'signal': [1],
         'source': [os.path.basename(ip)],
         'conditions': [len(conditions)],
+        'chromophores': [chrom_names],
         'folder_path': [os.path.abspath(out_folder)]
     }).write_parquet(signal_path)
     
@@ -203,10 +308,12 @@ if __name__ == '__main__':
                                a[4] if len(a) > 4 else 'ROI',
                                a[5] if len(a) > 5 else 'Mean',
                                a[6] if len(a) > 6 else 'roi',
-                               float(a[7]) if len(a) > 7 and a[7] and a[7] != 'None' else 2.0) if len(a) >= 3 else (
+                               float(a[7]) if len(a) > 7 and a[7] and a[7] != 'None' else 2.0,
+                               a[8] if len(a) > 8 else 'auto') if len(a) >= 3 else (
         print('Aggregate channels by ROIs per condition. Plot-ready output with per-epoch baseline correction.'),
-        print('[group] Usage: python group_analyzer.py <epoched.parquet> <groups_json> [y_lim] [x_label] [y_label] [suffix] [baseline_sec]'),
+        print('[group] Usage: python group_analyzer.py <epoched.parquet> <groups_json> [y_lim] [x_label] [y_label] [suffix] [baseline_sec] [chromophore_mode]'),
         print('[group] Channel patterns: exact match, glob (*, ?, []), or regex (re:pattern)'),
         print('[group] baseline_sec: seconds at start of each epoch for baseline (default 2.0)'),
-        print('[group] Example: python group_analyzer.py data.parquet \'{"DLPFC_L": ["1-*", "2-*"], "VMPFC": ["re:^[5-8]-"]}\' 0.5 "ROI" "HbO2 (μM)" fnirs 2.0'),
+        print('[group] chromophore_mode: auto (detect HbO/HbR), combined, or specific (HbO, HbR)'),
+        print('[group] Example: python group_analyzer.py data.parquet \'{"DLPFC_L": ["1-*", "2-*"], "VMPFC": ["re:^[5-8]-"]}\' 0.5 "ROI" "HbO2 (μM)" fnirs 2.0 auto'),
         sys.exit(1)))(sys.argv)

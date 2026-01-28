@@ -128,9 +128,9 @@ def analyze(ip, param_str, out_prefix):
         
         # Report issues
         if skipped_no_pos > 0:
-            print(f"[quest]   WARNING: {skipped_no_pos} values skipped - no position key '{x_pos_key}' found")
+            print(f"[quest] Warning: {skipped_no_pos} values skipped - no position key '{x_pos_key}' found")
         if skipped_out_of_range > 0:
-            print(f"[quest]   WARNING: {skipped_out_of_range} values skipped - position out of range [1, {n_labels}]")
+            print(f"[quest] Warning: {skipped_out_of_range} values skipped - position out of range [1, {n_labels}]")
         
         # Build ordered labels for dynamic case
         if x_is_dynamic:
@@ -138,7 +138,7 @@ def analyze(ip, param_str, out_prefix):
             # Check for missing labels
             missing_labels = [p for p in conds.keys() if p not in label_map]
             if missing_labels:
-                print(f"[quest]   WARNING: {len(missing_labels)} positions have data but no label: {missing_labels[:5]}...")
+                print(f"[quest] Warning: {len(missing_labels)} positions have data but no label: {missing_labels[:5]}...")
             dynamic_labels = [label_map[p] for p in sorted_pos]
             # Remap conds to 1-indexed for aggregate
             conds = {i+1: conds.get(sorted_pos[i], []) for i in range(len(sorted_pos))}
@@ -161,7 +161,7 @@ def analyze(ip, param_str, out_prefix):
             nephews = [c for p in parents for c in get_structural(p)]
             print(f"[quest]   '{pat}' -> {cond}: {len(parents)} parents, {len(nephews)} nephews")
             
-            if not nephews: print(f"[quest]   WARNING: No nephews for '{pat}'"); continue
+            if not nephews: print(f"[quest] Warning: No nephews for '{pat}'"); continue
             
             x_data, y_data, y_var, counts = extract_data(nephews)
             out = {'x_data': x_data, 'y_data': y_data, 'y_var': y_var, 'y_ticks': make_y_ticks(y_labels, y_max), 'y_labels': y_labels if isinstance(y_labels, list) else None, 'plot_type': 'grid', 'counts_per_x': counts, 'count': sum(counts), 'condition': cond}

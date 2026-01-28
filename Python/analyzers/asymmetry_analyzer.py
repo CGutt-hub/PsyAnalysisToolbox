@@ -68,7 +68,7 @@ def compute_asymmetry(ip: str, pairs: list[tuple[str,str]], mode: str = 'log',
             asym_sems.append(float(sem))
             print(f"[asymmetry]   {left}-{right}: L={left_val:.4f}±{left_sem:.4f}, R={right_val:.4f}±{right_sem:.4f}, Asym={asym:.4f}±{sem:.4f}")
         else:
-            print(f"[asymmetry]   Warning: Missing data for pair {left}-{right}")
+            print(f"[asymmetry] Warning: Missing data for pair {left}-{right}")
     
     out_path = os.path.join(os.getcwd(), f"{base}_{suffix}.parquet")
     pl.DataFrame({

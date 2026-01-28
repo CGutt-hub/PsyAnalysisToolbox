@@ -13,6 +13,10 @@ def git_lock = new ReentrantLock()
 @groovy.transform.Field
 def finalized_participants = ConcurrentHashMap.newKeySet()
 
+// Track participant processes from trace file (shared across watchdog iterations)
+@groovy.transform.Field
+def participant_processes = new ConcurrentHashMap<String, ConcurrentHashMap<String, String>>()
+
 // Workflow wrapper: discovers participants and creates output folders
 // Starts a trace-watching thread that finalizes participants when all their terminals complete
 workflow workflow_wrapper {
@@ -33,7 +37,7 @@ workflow workflow_wrapper {
         
         Thread.start {
             // Track ALL processes per participant: [pid: [process: status]]
-            def participant_processes = new ConcurrentHashMap<String, ConcurrentHashMap<String, String>>()
+            // Use global participant_processes for sharing with completion handler
             def last_activity = new ConcurrentHashMap<String, Long>()  // Last trace activity per participant
             def last_line_count = 0
             def INACTIVITY_MS = 15000  // 15 seconds of no new trace entries after all done
@@ -66,21 +70,17 @@ workflow workflow_wrapper {
                         def inactiveMs = now - lastTime
                         def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
                         
-                        // Debug: Log participant status periodically to participant's log file (every ~30 seconds per participant)
-                        if (inactiveMs > 10000 && inactiveMs < 35000) {
+                        // Debug: Log participant status when approaching finalization threshold
+                        def min_processes = 5
+                        if (procs.size() >= min_processes && blocking.size() == 0 && inactiveMs > 10000) {
                             if (pid_log.exists()) {
                                 def ts = new Date().format('yyyy-MM-dd HH:mm:ss')
-                                pid_log.append("[${ts}] [watchdog] ${pid}: ${procs.size()} procs, ${blocking.size()} blocking, ${completed.size()} done, ${cached.size()} cached, inactive ${inactiveMs}ms\n")
-                                if (blocking.size() > 0) {
-                                    pid_log.append("[${ts}] [watchdog] ${pid} blocked by: ${blocking.keySet().join(', ')}\n")
-                                }
+                                pid_log.append("[${ts}] [watchdog] ${pid}: ${procs.size()} procs, ${blocking.size()} blocking, ${completed.size()+cached.size()} done, inactive ${inactiveMs}ms (threshold: ${INACTIVITY_MS}ms)\n")
                             }
                         }
                         
-                        // Only finalize if: has processes AND none blocking AND inactive
-                        // Also require minimum number of processes to avoid premature finalization
-                        def min_processes = 5  // At least reader, tree, and a few other processes should run
-                        if (procs.size() >= min_processes && blocking.size() == 0 && (now - lastTime > INACTIVITY_MS)) {
+                        // Finalize if: has processes AND none blocking AND inactive > threshold
+                        if (procs.size() >= min_processes && blocking.size() == 0 && inactiveMs > INACTIVITY_MS) {
                             if (finalized_participants.add(pid)) {
                                 if (pid_log.exists()) {
                                     pid_log.append("[${new Date().format('yyyy-MM-dd HH:mm:ss')}] [watchdog] Finalizing ${pid}: ${completed.size() + cached.size()} succeeded, ${failed.size()} failed\n")
@@ -136,7 +136,7 @@ workflow workflow_wrapper {
                     last_line_count = lines.size()
                     
                 } catch (Exception e) {
-                    // Ignore errors (file might be locked by Nextflow)
+                    // Silently ignore errors (file might be locked by Nextflow)
                 }
             }
         }
@@ -311,6 +311,9 @@ def finalize_participant(String pid, String results_path, Map branch_status, int
 // Language-agnostic CLI wrapper for any executable (Python, Java, Rust, etc.)
 // Watchdog monitors trace file for failures, so no need for .failed markers
 process IOInterface {
+    // Tag with input filename for trace identification (enables watchdog participant tracking)
+    tag "${input instanceof Collection ? input[0].getName() : input.getName()}"
+    
     input:
         val env_exe             // Executable path (python, java, rust binary, etc.)
         val script              // Script path relative to workflow.launchDir
