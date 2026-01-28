@@ -18,126 +18,44 @@ def finalized_participants = ConcurrentHashMap.newKeySet()
 def participant_processes = new ConcurrentHashMap<String, ConcurrentHashMap<String, String>>()
 
 // Workflow wrapper: discovers participants and creates output folders
-// Starts a trace-watching thread that finalizes participants when all their terminals complete
+// Starts a trace-watching thread that finalizes participants when all processes complete
 workflow workflow_wrapper {
     take:
         input_dir
         output_dir
         participant_pattern
-        terminal_processes    // Comma-separated list of terminal process names (e.g., "panas_plotter,bisbas_plotter,...")
     
     main:
-        // Parse terminal process names
-        def terminal_list = terminal_processes.split(',').collect { it.trim() }
-        def num_terminals = terminal_list.size()
-        
-        // Start trace-watching thread for finalization
+        // Trace-watching thread: finalize participants when all their processes complete
         def trace_file = new File("${workflow.launchDir}/pipeline_trace.txt")
         def results_path = "${workflow.launchDir}/${output_dir}"
         
         Thread.start {
-            // Track ALL processes per participant: [pid: [process: status]]
-            // Use global participant_processes for sharing with completion handler
-            def last_activity = new ConcurrentHashMap<String, Long>()  // Last trace activity per participant
-            def last_line_count = 0
-            def INACTIVITY_MS = 15000  // 15 seconds of no new trace entries after all done
-            
-            // Terminal statuses (process is done, allows finalization)
-            def TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'ABORTED', 'CACHED'] as Set
-            // Blocking statuses (process not done, prevents finalization)  
-            def BLOCKING_STATUSES = ['SUBMITTED', 'RUNNING', 'PENDING'] as Set
-            
+            def seen = [] as Set
             while (true) {
+                Thread.sleep(5000)
+                if (!trace_file.exists()) continue
                 try {
-                    Thread.sleep(5000)  // Check every 5 seconds
-                    
-                    if (!trace_file.exists()) continue
-                    
-                    def lines = trace_file.readLines()
-                    def now = System.currentTimeMillis()
-                    
-                    // Check for participants that are done (no running processes + inactivity)
-                    last_activity.each { pid, lastTime ->
-                        if (finalized_participants.contains(pid)) return  // Already finalized
-                        
-                        def procs = participant_processes.getOrDefault(pid, [:])
-                        def blocking = procs.findAll { it.value in BLOCKING_STATUSES }
-                        def completed = procs.findAll { it.value == 'COMPLETED' }
-                        def failed = procs.findAll { it.value == 'FAILED' }
-                        def aborted = procs.findAll { it.value == 'ABORTED' }
-                        def cached = procs.findAll { it.value == 'CACHED' }
-                        
-                        def inactiveMs = now - lastTime
-                        def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
-                        
-                        // Debug: Log participant status when approaching finalization threshold
-                        def min_processes = 5
-                        if (procs.size() >= min_processes && blocking.size() == 0 && inactiveMs > 10000) {
-                            if (pid_log.exists()) {
-                                def ts = new Date().format('yyyy-MM-dd HH:mm:ss')
-                                pid_log.append("[${ts}] [watchdog] ${pid}: ${procs.size()} procs, ${blocking.size()} blocking, ${completed.size()+cached.size()} done, inactive ${inactiveMs}ms (threshold: ${INACTIVITY_MS}ms)\n")
-                            }
-                        }
-                        
-                        // Finalize if: has processes AND none blocking AND inactive > threshold
-                        if (procs.size() >= min_processes && blocking.size() == 0 && inactiveMs > INACTIVITY_MS) {
-                            if (finalized_participants.add(pid)) {
-                                if (pid_log.exists()) {
-                                    pid_log.append("[${new Date().format('yyyy-MM-dd HH:mm:ss')}] [watchdog] Finalizing ${pid}: ${completed.size() + cached.size()} succeeded, ${failed.size()} failed\n")
-                                }
-                                finalize_participant(pid, results_path, procs, procs.size(), git_lock)
-                            }
-                        }
-                    }
-                    
-                    if (lines.size() <= last_line_count) continue
-                    
-                    // Parse header to find column indices
-                    def header = lines[0].split('\t')
-                    def tagIdx = header.findIndexOf { it == 'tag' }  // Tag column contains input filename
-                    def statusIdx = header.findIndexOf { it == 'status' }
-                    def processIdx = header.findIndexOf { it == 'process' }
-                    
-                    if (tagIdx < 0 || statusIdx < 0 || processIdx < 0) continue
-                    
-                    // Process new lines only - filter to lines starting with task_id (number)
-                    for (int i = last_line_count ?: 1; i < lines.size(); i++) {
-                        def line = lines[i]
-                        // Skip continuation lines (script content) - valid trace lines start with task_id (number)
-                        if (!line || !line[0].isDigit()) continue
-                        
+                    def procs = [:].withDefault { [:] }  // pid -> [process: status]
+                    trace_file.eachLine { line ->
+                        // Trace format: task_id \t hash \t native_id \t process \t tag \t name \t status ...
                         def cols = line.split('\t')
-                        if (cols.size() <= Math.max(tagIdx, Math.max(statusIdx, processIdx))) continue
-                        
-                        def tag = cols[tagIdx]  // Tag contains input filename (e.g., "EV_003_panas.parquet")
-                        def status = cols[statusIdx]
-                        def processName = cols[processIdx]
-                        
-                        // Extract participant ID from tag (input filename like "EV_003_panas.parquet")
-                        def pidMatch = tag =~ /([A-Za-z]+_[0-9]+)/
-                        if (!pidMatch) continue
-                        def pid = pidMatch[0][1]
-                        
-                        // Track ALL statuses for any process
-                        participant_processes.computeIfAbsent(pid, { new ConcurrentHashMap<String, String>() })
-                        participant_processes[pid][processName] = status
-                        last_activity[pid] = now  // Reset inactivity timer on any trace entry
-                        
-                        // Write to participant's log file (only for terminal COMPLETED/FAILED)
-                        if (processName in terminal_list && status in ['COMPLETED', 'FAILED']) {
-                            def pid_log = new File("${results_path}/${pid}/${pid}_pipeline.log")
-                            if (pid_log.exists()) {
-                                def branch = processName.replace('_plotter', '').replace('_rel', '_rel')
-                                pid_log.append("[${new Date().format('yyyy-MM-dd HH:mm:ss')}] ${branch} -> ${status}\n")
-                            }
-                        }
+                        if (cols.size() < 7 || !cols[0].isNumber()) return
+                        def proc = cols[3], tag = cols[4], status = cols[6]
+                        def pid = (tag =~ /([A-Za-z]+_\d+)/)?[0]?[1]
+                        if (pid) procs[pid][proc] = status
                     }
-                    
-                    last_line_count = lines.size()
-                    
-                } catch (Exception e) {
-                    // Silently ignore errors (file might be locked by Nextflow)
-                }
+                    procs.each { pid, jobs ->
+                        if (pid in seen || pid in finalized_participants) return
+                        if (jobs.size() < 5 || jobs.any { it.value in ['SUBMITTED','RUNNING','PENDING'] }) return
+                        seen << pid
+                        finalized_participants.add(pid)
+                        def ok = jobs.count { it.value in ['COMPLETED','CACHED'] }
+                        def fail = jobs.count { it.value == 'FAILED' }
+                        new File("${results_path}/${pid}/${pid}_pipeline.log") << "[${new Date().format('yyyy-MM-dd HH:mm:ss')}] Finalized: ${ok} ok, ${fail} failed\n"
+                        finalize_participant(pid, results_path, jobs, jobs.size(), git_lock)
+                    }
+                } catch (e) {}
             }
         }
         
@@ -311,6 +229,8 @@ def finalize_participant(String pid, String results_path, Map branch_status, int
 // Language-agnostic CLI wrapper for any executable (Python, Java, Rust, etc.)
 // Watchdog monitors trace file for failures, so no need for .failed markers
 process IOInterface {
+    tag "${input}"              // Tag with input filename for trace file (enables watchdog tracking)
+    
     input:
         val env_exe             // Executable path (python, java, rust binary, etc.)
         val script              // Script path relative to workflow.launchDir
