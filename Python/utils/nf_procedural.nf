@@ -94,11 +94,11 @@ workflow workflow_wrapper {
                     
                     // Parse header to find column indices
                     def header = lines[0].split('\t')
-                    def nameIdx = header.findIndexOf { it == 'name' }
+                    def tagIdx = header.findIndexOf { it == 'tag' }  // Tag column contains input filename
                     def statusIdx = header.findIndexOf { it == 'status' }
                     def processIdx = header.findIndexOf { it == 'process' }
                     
-                    if (nameIdx < 0 || statusIdx < 0 || processIdx < 0) continue
+                    if (tagIdx < 0 || statusIdx < 0 || processIdx < 0) continue
                     
                     // Process new lines only - filter to lines starting with task_id (number)
                     for (int i = last_line_count ?: 1; i < lines.size(); i++) {
@@ -107,14 +107,14 @@ workflow workflow_wrapper {
                         if (!line || !line[0].isDigit()) continue
                         
                         def cols = line.split('\t')
-                        if (cols.size() <= Math.max(nameIdx, Math.max(statusIdx, processIdx))) continue
+                        if (cols.size() <= Math.max(tagIdx, Math.max(statusIdx, processIdx))) continue
                         
-                        def taskName = cols[nameIdx]
+                        def tag = cols[tagIdx]  // Tag contains input filename (e.g., "EV_003_panas.parquet")
                         def status = cols[statusIdx]
                         def processName = cols[processIdx]
                         
-                        // Extract participant ID from task name (e.g., "panas_plotter (EV_003_panas.parquet)")
-                        def pidMatch = taskName =~ /\(([A-Za-z]+_[0-9]+)/
+                        // Extract participant ID from tag (input filename like "EV_003_panas.parquet")
+                        def pidMatch = tag =~ /([A-Za-z]+_[0-9]+)/
                         if (!pidMatch) continue
                         def pid = pidMatch[0][1]
                         
@@ -311,9 +311,6 @@ def finalize_participant(String pid, String results_path, Map branch_status, int
 // Language-agnostic CLI wrapper for any executable (Python, Java, Rust, etc.)
 // Watchdog monitors trace file for failures, so no need for .failed markers
 process IOInterface {
-    // Tag with input filename for trace identification (enables watchdog participant tracking)
-    tag "${input instanceof Collection ? input[0].getName() : input.getName()}"
-    
     input:
         val env_exe             // Executable path (python, java, rust binary, etc.)
         val script              // Script path relative to workflow.launchDir
